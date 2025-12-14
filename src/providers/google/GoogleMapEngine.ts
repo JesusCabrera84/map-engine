@@ -94,8 +94,8 @@ export class GoogleMapEngine extends MapEngine {
     private getBackgroundColorForTheme(theme: ThemeName): string {
         switch (theme) {
             case 'modern': return '#0b1524';
-            case 'dark': return '#0f1115';
-            case 'light': default: return '#ffffff';
+            case 'dark': return '#0B1524';
+            case 'light': default: return '#0F1115';
         }
     }
 

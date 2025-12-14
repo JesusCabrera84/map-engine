@@ -129,10 +129,10 @@ var GoogleMapEngine = class extends MapEngine {
       case "modern":
         return "#0b1524";
       case "dark":
-        return "#0f1115";
+        return "#0B1524";
       case "light":
       default:
-        return "#ffffff";
+        return "#0F1115";
     }
   }
   getStylesForTheme(theme) {
