@@ -2,46 +2,34 @@
 import { setOptions, importLibrary } from '@googlemaps/js-api-loader';
 import { MapEngine } from '../../engine/MapEngine.js';
 import type { MapEngineOptions, ThemeName, VehicleLike, IconConfig } from '../../engine/types.js';
-import { haversineDistance, computeBearing, extrapolatePosition, lerpPosition } from '../../utils/geo.js';
-import type { LatLng } from '../../utils/geo.js';
-
-interface LiveUnitState {
-    lastFix: { lat: number; lon: number; ts: number }; // ts: wall-clock timestamp, only for TTL
-    prevFix: { lat: number; lon: number; ts: number } | null;
-    speed: number; // m/s
-    bearing: number;
-    virtualPosition: { lat: number; lon: number };
-    lastUpdateTs: number;
-    isStopped: boolean;
-}
+import { LiveMotionController } from '../../engine/controllers/LiveMotionController.js';
+import { TripReplayController } from '../../engine/controllers/TripReplayController.js';
+import type { MarkerAdapter } from '../../engine/interfaces/MarkerAdapter.js';
 
 export class GoogleMapEngine extends MapEngine {
     private map: google.maps.Map | null = null;
     private google: typeof google | null = null;
     private markers = new Map<string | number, { marker: google.maps.Marker; infoWindow: google.maps.InfoWindow }>();
-    private tripMarkers: google.maps.Marker[] = [];
-    private currentPolyline: google.maps.Polyline | null = null;
 
-    // Live Animation
-    private liveVehicles = new Map<string | number, LiveUnitState>();
-    private liveAnimationFrameId: number | null = null;
-    private lastLiveFrameTime = 0;
-    private readonly MAX_STALE_MS = 15 * 60 * 1000; // 15 minutes
-
-    // Trip Animation
-    private vehicleMarker: google.maps.Marker | null = null;
-    private animationFrameId: number | null = null;
-    private isPaused = false;
-    private animationStartTime = 0;
-    private pausedTime = 0;
-    private totalAnimationTime = 0;
-    private animationPath: any[] = [];
-    private onFinish: (() => void) | null = null;
+    // Controllers
+    private liveController: LiveMotionController;
+    private tripController: TripReplayController | null = null;
+    private markerAdapter: MarkerAdapter;
 
     constructor(options: MapEngineOptions) {
         super(options);
-        // Start live animation loop immediately, it will be idle until markers are added
-        this.startLive();
+
+        this.markerAdapter = {
+            setMarkerPosition: (id, lat, lng) => {
+                const m = this.markers.get(id)?.marker;
+                if (m && this.google) {
+                    m.setPosition(new this.google.maps.LatLng(lat, lng));
+                }
+            }
+        };
+
+        this.liveController = new LiveMotionController(this.markerAdapter);
+        this.liveController.start();
     }
 
     async mount(element: string | HTMLElement): Promise<google.maps.Map> {
@@ -63,9 +51,8 @@ export class GoogleMapEngine extends MapEngine {
 
         const initialTheme: ThemeName = this.options.theme || 'modern';
         const styles = this.getStylesForTheme(initialTheme);
-
-        // Default options + overrides
         const backgroundColor = this.getBackgroundColorForTheme(initialTheme);
+
         const mapOptions: google.maps.MapOptions = {
             backgroundColor: this.options.backgroundColor || backgroundColor,
             center: this.options.center || { lat: 19.4326, lng: -99.1332 },
@@ -76,7 +63,7 @@ export class GoogleMapEngine extends MapEngine {
             zoomControl: true,
             styles: (styles as any) || undefined,
             disableDefaultUI: true,
-            ...this.options.mapOptions // allow overriding arbitrary google map options
+            ...this.options.mapOptions
         };
 
         const el = typeof element === 'string' ? document.getElementById(element) : element;
@@ -84,10 +71,12 @@ export class GoogleMapEngine extends MapEngine {
 
         this.map = new this.google!.maps.Map(el as HTMLElement, mapOptions);
 
-        // Force initial background color on the container as well
         if (mapOptions.backgroundColor) {
             this.map.getDiv().style.backgroundColor = mapOptions.backgroundColor;
         }
+
+        // Initialize TripController now that map is ready
+        this.tripController = new TripReplayController(this.map, this.google);
 
         return this.map;
     }
@@ -115,7 +104,6 @@ export class GoogleMapEngine extends MapEngine {
             const styleCount = styles ? `${styles.length} rules` : 'Default (null)';
             console.log(`[GoogleMapEngine] Applying styles: ${styleCount}, bg: ${backgroundColor}`);
             this.map.setOptions({ styles, backgroundColor });
-            // Force container update
             this.map.getDiv().style.backgroundColor = backgroundColor;
         } else {
             console.warn('[GoogleMapEngine] Map not initialized, skipping theme update');
@@ -136,7 +124,6 @@ export class GoogleMapEngine extends MapEngine {
 
         const position = { lat, lng };
 
-        // Use IconResolver
         let iconConfig: IconConfig = { url: '' };
         if (this.options.iconResolver) {
             iconConfig = this.options.iconResolver(vehicle);
@@ -158,7 +145,6 @@ export class GoogleMapEngine extends MapEngine {
 
         const marker = new this.google.maps.Marker(markerOptions);
 
-        // Info Window
         let content = '';
         if (this.options.infoWindowRenderer) {
             content = this.options.infoWindowRenderer(vehicle);
@@ -170,8 +156,8 @@ export class GoogleMapEngine extends MapEngine {
         });
 
         this.markers.set(id, { marker, infoWindow });
-        this.initLiveState(id, vehicle);
-        this.startLive();
+
+        this.liveController.addVehicle(vehicle);
     }
 
     updateVehicleMarker(vehicle: VehicleLike): void {
@@ -187,12 +173,10 @@ export class GoogleMapEngine extends MapEngine {
         const lng = Number(vehicle.lng || vehicle.longitude);
 
         if (!isNaN(lat) && !isNaN(lng)) {
-            // Update Info Window content
             if (this.options.infoWindowRenderer) {
                 existing.infoWindow.setContent(this.options.infoWindowRenderer(vehicle));
             }
 
-            // Update Icon
             if (this.options.iconResolver) {
                 const iconConfig = this.options.iconResolver(vehicle);
                 if (iconConfig.url) {
@@ -204,8 +188,7 @@ export class GoogleMapEngine extends MapEngine {
                 }
             }
 
-            // Update Live State (Dead Reckoning)
-            this.updateLiveState(id, vehicle, lat, lng);
+            this.liveController.updateVehicle(vehicle);
         }
     }
 
@@ -215,154 +198,25 @@ export class GoogleMapEngine extends MapEngine {
             data.marker.setMap(null);
             this.markers.delete(id);
         }
-        this.liveVehicles.delete(id);
+        this.liveController.removeVehicle(id);
     }
 
     clearAllMarkers(): void {
         this.markers.forEach(data => data.marker.setMap(null));
         this.markers.clear();
-        this.liveVehicles.clear();
-    }
 
-    // ==========================================
-    // LIVE ANIMATION
-    // ==========================================
-
-    private initLiveState(id: string | number, vehicle: VehicleLike) {
-        const lat = Number(vehicle.lat || vehicle.latitude);
-        const lng = Number(vehicle.lng || vehicle.longitude);
-        const speedKmh = Number(vehicle.speed || 0);
-        const ts = Date.now();
-
-        this.liveVehicles.set(id, {
-            lastFix: { lat, lon: lng, ts },
-            prevFix: null,
-            speed: (speedKmh * 1000) / 3600, // m/s
-            bearing: parseFloat(String(vehicle.course || 0)),
-            virtualPosition: { lat, lon: lng },
-            lastUpdateTs: performance.now(),
-            isStopped: this.isVehicleStopped(vehicle)
-        });
-    }
-
-    private updateLiveState(id: string | number, vehicle: VehicleLike, newLat: number, newLon: number) {
-        const state = this.liveVehicles.get(id);
-        if (!state) {
-            this.initLiveState(id, vehicle);
-            return;
-        }
-
-        const now = Date.now();
-        const speedKmh = Number(vehicle.speed || 0);
-
-        state.prevFix = { ...state.lastFix };
-        state.lastFix = { lat: newLat, lon: newLon, ts: now };
-
-        if (state.prevFix) {
-            const dist = haversineDistance(
-                { lat: state.prevFix.lat, lng: state.prevFix.lon },
-                { lat: newLat, lng: newLon }
-            );
-            if (dist > 2) {
-                state.bearing = computeBearing(state.prevFix.lat, state.prevFix.lon, newLat, newLon);
-            } else if (vehicle.course) {
-                state.bearing = Number(vehicle.course);
-            }
-        }
-
-        state.speed = (speedKmh * 1000) / 3600;
-        state.isStopped = this.isVehicleStopped(vehicle);
-
-        // Snap if too far
-        const distVirtual = haversineDistance(
-            { lat: state.virtualPosition.lat, lng: state.virtualPosition.lon },
-            { lat: newLat, lng: newLon }
-        );
-
-        if (distVirtual > 500) {
-            state.virtualPosition = { lat: newLat, lon: newLon };
-        }
-    }
-
-    private isVehicleStopped(vehicle: VehicleLike): boolean {
-        const speed = Number(vehicle.speed || 0);
-        if (vehicle.msg_class === 'Alert') {
-            if (String(vehicle.alert) === 'Turn Off') return true;
-            if (String(vehicle.alert) === 'Turn On') return false;
-        }
-        if (String(vehicle.msg_class).toLowerCase() === 'status') {
-            const status = String(vehicle.engine_status as any);
-            if (status === 'OFF' || status === 'off' || status === 'false' || status === '0') return true;
-            if (status === 'ON' || status === 'on' || status === 'true' || status === '1') return false;
-        }
-        return speed < 1;
+        // Reset Live Controller
+        this.liveController.stop();
+        this.liveController = new LiveMotionController(this.markerAdapter);
+        this.liveController.start();
     }
 
     startLive(): void {
-        if (typeof window === 'undefined') return;
-        if (this.liveAnimationFrameId !== null) return;
-
-        const animate = (time: number) => {
-            if (this.liveVehicles.size === 0) {
-                this.liveAnimationFrameId = null;
-                return;
-            }
-
-            if (!this.lastLiveFrameTime) this.lastLiveFrameTime = time;
-            const delta = time - this.lastLiveFrameTime;
-            this.lastLiveFrameTime = time;
-
-            const dt = Math.min(delta, 100) / 1000; // cap 100ms
-            const now = Date.now();
-
-            this.liveVehicles.forEach((state, id) => {
-                // Signal Loss Policy: Stop if no update for MAX_STALE_MS
-                if (now - state.lastFix.ts > this.MAX_STALE_MS) {
-                    state.isStopped = true;
-                }
-
-                const markerData = this.markers.get(id);
-                if (!markerData) return;
-
-                if (state.isStopped) {
-                    state.virtualPosition = lerpPosition(
-                        state.virtualPosition,
-                        { lat: state.lastFix.lat, lon: state.lastFix.lon },
-                        0.1
-                    );
-                } else {
-                    const projected = extrapolatePosition(
-                        state.virtualPosition.lat,
-                        state.virtualPosition.lon,
-                        state.speed,
-                        state.bearing,
-                        dt
-                    );
-                    state.virtualPosition = lerpPosition(
-                        projected,
-                        { lat: state.lastFix.lat, lon: state.lastFix.lon },
-                        0.05
-                    );
-                }
-
-                if (this.google && markerData.marker) {
-                    const newPos = new this.google.maps.LatLng(state.virtualPosition.lat, state.virtualPosition.lon);
-                    markerData.marker.setPosition(newPos);
-                }
-            });
-
-            this.liveAnimationFrameId = requestAnimationFrame(animate);
-        };
-
-        this.liveAnimationFrameId = requestAnimationFrame(animate);
+        this.liveController.start();
     }
 
     stopLive(): void {
-        if (this.liveAnimationFrameId !== null) {
-            cancelAnimationFrame(this.liveAnimationFrameId);
-            this.liveAnimationFrameId = null;
-            this.lastLiveFrameTime = 0;
-        }
+        this.liveController.stop();
     }
 
     centerOnVehicles(vehicles: VehicleLike[]): void {
@@ -395,211 +249,40 @@ export class GoogleMapEngine extends MapEngine {
     }
 
     // ==========================================
-    // TRIP POLYLINE & ANIMATION
+    // TRIP POLYLINE & ANIMATION DELEGATION
     // ==========================================
 
     drawTripPolyline(coordinates: any[]): void {
-        if (!this.map || !this.google) return;
-        this.clearTripPolyline();
-
-        if (!coordinates || coordinates.length === 0) return;
-
-        const path: google.maps.LatLngLiteral[] = [];
-        const bounds = new this.google.maps.LatLngBounds();
-
-        coordinates.forEach(coord => {
-            const lat = Number(coord.lat);
-            const lng = Number(coord.lng || coord.lon);
-            if (!isNaN(lat) && !isNaN(lng)) {
-                const pos = { lat, lng };
-                path.push(pos);
-                bounds.extend(pos);
-
-                // Markers for alerts/ignition
-                if (coord.itemType === 'alert') {
-                    let iconUrl = null;
-                    if (coord.type === 'ignition_on') iconUrl = '/marker/marker-power-on.png';
-                    else if (coord.type === 'ignition_off') iconUrl = '/marker/marker-power-off.png';
-
-                    if (iconUrl) {
-                        const marker = new this.google!.maps.Marker({
-                            position: pos,
-                            map: this.map,
-                            icon: {
-                                url: iconUrl,
-                                scaledSize: new this.google!.maps.Size(32, 32),
-                                anchor: new this.google!.maps.Point(16, 16)
-                            },
-                            title: coord.type
-                        });
-                        this.tripMarkers.push(marker);
-                    }
-                }
-            }
-        });
-
-        this.currentPolyline = new this.google.maps.Polyline({
-            path,
-            geodesic: true,
-            strokeColor: '#00FFFF',
-            strokeOpacity: 1.0,
-            strokeWeight: 4,
-            map: this.map
-        });
-
-        this.map.fitBounds(bounds);
+        if (this.tripController) {
+            this.tripController.drawPolyline(coordinates);
+        }
     }
 
     clearTripPolyline(): void {
-        if (this.currentPolyline) {
-            this.currentPolyline.setMap(null);
-            this.currentPolyline = null;
+        if (this.tripController) {
+            this.tripController.clearPolyline();
         }
-        this.tripMarkers.forEach(m => m.setMap(null));
-        this.tripMarkers = [];
-        this.stopTripAnimation();
     }
 
     stopTripAnimation(): void {
-        if (this.animationFrameId) {
-            cancelAnimationFrame(this.animationFrameId);
-            this.animationFrameId = null;
+        if (this.tripController) {
+            this.tripController.stop();
         }
-        if (this.vehicleMarker) {
-            this.vehicleMarker.setMap(null);
-        }
-        this.isPaused = false;
     }
 
     animateTrip(coordinates: any[], totalDuration = 10000, onFinish?: () => void): void {
-        if (!this.map || !this.google || !coordinates || coordinates.length < 2) return;
-        this.stopTripAnimation();
-        this.onFinish = onFinish || null;
-
-        const rawPath = coordinates.map(c => ({
-            lat: Number(c.lat),
-            lng: Number(c.lng || c.lon)
-        })).filter(c => !isNaN(c.lat) && !isNaN(c.lng));
-
-        this.animationPath = this.prepareAnimationPath(rawPath, totalDuration);
-        this.animationStartTime = performance.now();
-        this.pausedTime = 0;
-        this.isPaused = false;
-
-        // Create vehicle marker reuse logic
-        if (!this.vehicleMarker) {
-            this.vehicleMarker = new this.google.maps.Marker({
-                map: this.map,
-                icon: {
-                    // If we want a separate icon for trip, or use generic. 
-                    // The original code used specific generic car. 
-                    // We should probably allow customization or fallback.
-                    url: 'https://cdn-icons-png.flaticon.com/512/3202/3202926.png', // Temporary fallback or use options?
-                    // Actually the original code imported unitIcons and used generic one.
-                    // Assuming we can rely on some default web URL or updated logic later.
-                    // For now I'll use a placeholder or check if I can use iconResolver?
-                    // But iconResolver resolves for a "VehicleLike". Here we are animating a trip.
-                    // I will assume a default marker or reuse logic.
-                    // Original: unitIcons['vehicle-car-sedan']
-                    scaledSize: new this.google.maps.Size(40, 40),
-                    anchor: new this.google.maps.Point(20, 20)
-                },
-                zIndex: 1000
-            });
-        } else {
-            this.vehicleMarker.setMap(this.map);
+        if (this.tripController) {
+            this.tripController.play(coordinates, totalDuration, onFinish);
         }
-
-        // Attempt to set correct icon if possible, but trip coords might not have full vehicle info.
-        // We will stick to the created marker.
-
-        if (this.animationPath.length > 0) {
-            const start = this.animationPath[0].type === 'move' ? this.animationPath[0].start : this.animationPath[0].position;
-            this.vehicleMarker.setPosition(start);
-        }
-
-        const animate = (time: number) => {
-            if (this.isPaused) {
-                this.animationFrameId = requestAnimationFrame(animate);
-                return;
-            }
-
-            const elapsed = time - this.animationStartTime - this.pausedTime;
-            if (elapsed >= this.totalAnimationTime) {
-                const last = this.animationPath[this.animationPath.length - 1];
-                const end = last.type === 'move' ? last.end : last.position;
-                this.vehicleMarker?.setPosition(end);
-                this.isPaused = true;
-                this.onFinish?.();
-                return;
-            }
-
-            const segment = this.animationPath.find(s => elapsed >= s.startTime && elapsed < s.endTime);
-            if (segment && this.vehicleMarker) {
-                if (segment.type === 'stop') {
-                    this.vehicleMarker.setPosition(segment.position);
-                } else if (segment.type === 'move') {
-                    const segElapsed = elapsed - segment.startTime;
-                    const progress = segElapsed / segment.duration;
-                    const lat = segment.start.lat + (segment.end.lat - segment.start.lat) * progress;
-                    const lng = segment.start.lng + (segment.end.lng - segment.start.lng) * progress;
-                    this.vehicleMarker.setPosition({ lat, lng });
-                }
-            }
-            this.animationFrameId = requestAnimationFrame(animate);
-        };
-
-        this.animationFrameId = requestAnimationFrame(animate);
-    }
-
-    private prepareAnimationPath(rawPath: any[], totalDuration: number) {
-        const segments: any[] = [];
-        const STOP_THRESHOLD = 5;
-        const STOP_PAUSE_DURATION = 400;
-        let currentStop: any = null;
-
-        for (let i = 0; i < rawPath.length - 1; i++) {
-            const p1 = rawPath[i];
-            const p2 = rawPath[i + 1];
-            const dist = haversineDistance(p1, p2);
-
-            if (dist < STOP_THRESHOLD) {
-                if (!currentStop) {
-                    currentStop = { type: 'stop', position: p1, duration: STOP_PAUSE_DURATION };
-                    segments.push(currentStop);
-                }
-            } else {
-                currentStop = null;
-                segments.push({ type: 'move', start: p1, end: p2, distance: dist, duration: 0 });
-            }
-        }
-
-        const totalMoveDist = segments.filter(s => s.type === 'move').reduce((acc, s) => acc + s.distance, 0);
-        const totalStopDur = segments.filter(s => s.type === 'stop').reduce((acc, s) => acc + s.duration, 0);
-        const availableMoveTime = Math.max(1000, totalDuration - totalStopDur);
-
-        segments.forEach(s => {
-            if (s.type === 'move') {
-                s.duration = (s.distance / totalMoveDist) * availableMoveTime;
-            }
-        });
-
-        let accumulated = 0;
-        segments.forEach(s => {
-            s.startTime = accumulated;
-            accumulated += s.duration;
-            s.endTime = accumulated;
-        });
-
-        this.totalAnimationTime = accumulated;
-        return segments;
     }
 
     dispose(): void {
-        this.stopLive();
-        this.stopTripAnimation();
+        this.liveController.stop();
+        if (this.tripController) {
+            this.tripController.stop();
+            this.tripController.clearPolyline();
+        }
         this.clearAllMarkers();
-        if (this.currentPolyline) this.currentPolyline.setMap(null);
         this.map = null;
     }
 }
