@@ -65,6 +65,7 @@ export class GoogleMapEngine extends MapEngine {
 
         // Default options + overrides
         const mapOptions: google.maps.MapOptions = {
+            backgroundColor: this.options.backgroundColor || (initialTheme !== 'light' ? '#17191d' : undefined),
             center: this.options.center || { lat: 19.4326, lng: -99.1332 },
             zoom: this.options.zoom || 13,
             fullscreenControl: true,

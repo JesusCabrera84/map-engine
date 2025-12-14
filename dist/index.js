@@ -103,9 +103,9 @@ var GoogleMapEngine = class extends MapEngine {
     const initialTheme = this.options.theme || "modern";
     const styles = this.getStylesForTheme(initialTheme);
     const mapOptions = {
+      backgroundColor: this.options.backgroundColor || (initialTheme !== "light" ? "#17191d" : void 0),
       center: this.options.center || { lat: 19.4326, lng: -99.1332 },
       zoom: this.options.zoom || 13,
-      mapTypeId: this.google.maps.MapTypeId.ROADMAP,
       fullscreenControl: true,
       streetViewControl: false,
       mapTypeControl: false,
