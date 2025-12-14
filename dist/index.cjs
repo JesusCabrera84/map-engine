@@ -151,6 +151,9 @@ var GoogleMapEngine = class extends MapEngine {
     const el = typeof element === "string" ? document.getElementById(element) : element;
     if (!el) throw new Error("Map container element not found");
     this.map = new this.google.maps.Map(el, mapOptions);
+    if (mapOptions.backgroundColor) {
+      this.map.getDiv().style.backgroundColor = mapOptions.backgroundColor;
+    }
     return this.map;
   }
   getBackgroundColorForTheme(theme) {
@@ -177,6 +180,7 @@ var GoogleMapEngine = class extends MapEngine {
       const backgroundColor = this.getBackgroundColorForTheme(theme);
       console.log("[GoogleMapEngine] Applying styles count:", styles?.length, "bg:", backgroundColor);
       this.map.setOptions({ styles, backgroundColor });
+      this.map.getDiv().style.backgroundColor = backgroundColor;
     } else {
       console.warn("[GoogleMapEngine] Map not initialized, skipping theme update");
     }

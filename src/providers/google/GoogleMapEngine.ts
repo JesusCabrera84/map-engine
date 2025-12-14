@@ -83,6 +83,11 @@ export class GoogleMapEngine extends MapEngine {
 
         this.map = new this.google!.maps.Map(el as HTMLElement, mapOptions);
 
+        // Force initial background color on the container as well
+        if (mapOptions.backgroundColor) {
+            this.map.getDiv().style.backgroundColor = mapOptions.backgroundColor;
+        }
+
         return this.map;
     }
 
@@ -108,6 +113,8 @@ export class GoogleMapEngine extends MapEngine {
             const backgroundColor = this.getBackgroundColorForTheme(theme);
             console.log('[GoogleMapEngine] Applying styles count:', styles?.length, 'bg:', backgroundColor);
             this.map.setOptions({ styles, backgroundColor });
+            // Force container update
+            this.map.getDiv().style.backgroundColor = backgroundColor;
         } else {
             console.warn('[GoogleMapEngine] Map not initialized, skipping theme update');
         }
