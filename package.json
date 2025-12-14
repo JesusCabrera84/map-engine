@@ -1,6 +1,6 @@
 {
   "name": "@JesusCabrera84/map-engine",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "type": "module",
   "description": "",
   "main": "dist/index.cjs",
@@ -21,7 +21,11 @@
   "author": "",
   "license": "ISC",
   "devDependencies": {
+    "@types/google.maps": "^3.58.1",
     "tsup": "^8.5.1",
     "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "@googlemaps/js-api-loader": "^2.0.2"
   }
 }
