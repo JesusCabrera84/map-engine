@@ -67,7 +67,6 @@ export class GoogleMapEngine extends MapEngine {
         const mapOptions: google.maps.MapOptions = {
             center: this.options.center || { lat: 19.4326, lng: -99.1332 },
             zoom: this.options.zoom || 13,
-            mapTypeId: this.google!.maps.MapTypeId.ROADMAP,
             fullscreenControl: true,
             streetViewControl: false,
             mapTypeControl: false,
