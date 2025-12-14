@@ -74,6 +74,8 @@ var GoogleMapEngine = class extends MapEngine {
   liveVehicles = /* @__PURE__ */ new Map();
   liveAnimationFrameId = null;
   lastLiveFrameTime = 0;
+  MAX_STALE_MS = 15 * 60 * 1e3;
+  // 15 minutes
   // Trip Animation
   vehicleMarker = null;
   animationFrameId = null;
@@ -85,7 +87,7 @@ var GoogleMapEngine = class extends MapEngine {
   onFinish = null;
   constructor(options) {
     super(options);
-    this.startLiveAnimationLoop();
+    this.startLive();
   }
   async mount(element) {
     const apiKey = this.options.apiKey || import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
@@ -191,6 +193,7 @@ var GoogleMapEngine = class extends MapEngine {
     });
     this.markers.set(id, { marker, infoWindow });
     this.initLiveState(id, vehicle);
+    this.startLive();
   }
   updateVehicleMarker(vehicle) {
     const id = vehicle.id || vehicle.device_id || vehicle.deviceId;
@@ -256,7 +259,7 @@ var GoogleMapEngine = class extends MapEngine {
       this.initLiveState(id, vehicle);
       return;
     }
-    const now = performance.now();
+    const now = Date.now();
     const speedKmh = Number(vehicle.speed || 0);
     state.prevFix = { ...state.lastFix };
     state.lastFix = { lat: newLat, lon: newLon, ts: now };
@@ -294,14 +297,23 @@ var GoogleMapEngine = class extends MapEngine {
     }
     return speed < 1;
   }
-  startLiveAnimationLoop() {
+  startLive() {
     if (typeof window === "undefined") return;
+    if (this.liveAnimationFrameId !== null) return;
     const animate = (time) => {
+      if (this.liveVehicles.size === 0) {
+        this.liveAnimationFrameId = null;
+        return;
+      }
       if (!this.lastLiveFrameTime) this.lastLiveFrameTime = time;
       const delta = time - this.lastLiveFrameTime;
       this.lastLiveFrameTime = time;
       const dt = Math.min(delta, 100) / 1e3;
+      const now = Date.now();
       this.liveVehicles.forEach((state, id) => {
+        if (now - state.lastFix.ts > this.MAX_STALE_MS) {
+          state.isStopped = true;
+        }
         const markerData = this.markers.get(id);
         if (!markerData) return;
         if (state.isStopped) {
@@ -332,6 +344,13 @@ var GoogleMapEngine = class extends MapEngine {
       this.liveAnimationFrameId = requestAnimationFrame(animate);
     };
     this.liveAnimationFrameId = requestAnimationFrame(animate);
+  }
+  stopLive() {
+    if (this.liveAnimationFrameId !== null) {
+      cancelAnimationFrame(this.liveAnimationFrameId);
+      this.liveAnimationFrameId = null;
+      this.lastLiveFrameTime = 0;
+    }
   }
   centerOnVehicles(vehicles) {
     if (!this.map || !this.google || !vehicles.length) return;
@@ -530,7 +549,7 @@ var GoogleMapEngine = class extends MapEngine {
     return segments;
   }
   dispose() {
-    if (this.liveAnimationFrameId) cancelAnimationFrame(this.liveAnimationFrameId);
+    this.stopLive();
     this.stopTripAnimation();
     this.clearAllMarkers();
     if (this.currentPolyline) this.currentPolyline.setMap(null);

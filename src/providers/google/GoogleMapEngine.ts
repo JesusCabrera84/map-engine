@@ -6,7 +6,7 @@ import { haversineDistance, computeBearing, extrapolatePosition, lerpPosition } 
 import type { LatLng } from '../../utils/geo.js';
 
 interface LiveUnitState {
-    lastFix: { lat: number; lon: number; ts: number };
+    lastFix: { lat: number; lon: number; ts: number }; // ts: wall-clock timestamp, only for TTL
     prevFix: { lat: number; lon: number; ts: number } | null;
     speed: number; // m/s
     bearing: number;
@@ -26,6 +26,7 @@ export class GoogleMapEngine extends MapEngine {
     private liveVehicles = new Map<string | number, LiveUnitState>();
     private liveAnimationFrameId: number | null = null;
     private lastLiveFrameTime = 0;
+    private readonly MAX_STALE_MS = 15 * 60 * 1000; // 15 minutes
 
     // Trip Animation
     private vehicleMarker: google.maps.Marker | null = null;
@@ -40,7 +41,7 @@ export class GoogleMapEngine extends MapEngine {
     constructor(options: MapEngineOptions) {
         super(options);
         // Start live animation loop immediately, it will be idle until markers are added
-        this.startLiveAnimationLoop();
+        this.startLive();
     }
 
     async mount(element: string | HTMLElement): Promise<google.maps.Map> {
@@ -170,6 +171,7 @@ export class GoogleMapEngine extends MapEngine {
 
         this.markers.set(id, { marker, infoWindow });
         this.initLiveState(id, vehicle);
+        this.startLive();
     }
 
     updateVehicleMarker(vehicle: VehicleLike): void {
@@ -250,7 +252,7 @@ export class GoogleMapEngine extends MapEngine {
             return;
         }
 
-        const now = performance.now();
+        const now = Date.now();
         const speedKmh = Number(vehicle.speed || 0);
 
         state.prevFix = { ...state.lastFix };
@@ -296,17 +298,29 @@ export class GoogleMapEngine extends MapEngine {
         return speed < 1;
     }
 
-    private startLiveAnimationLoop() {
+    startLive(): void {
         if (typeof window === 'undefined') return;
+        if (this.liveAnimationFrameId !== null) return;
 
         const animate = (time: number) => {
+            if (this.liveVehicles.size === 0) {
+                this.liveAnimationFrameId = null;
+                return;
+            }
+
             if (!this.lastLiveFrameTime) this.lastLiveFrameTime = time;
             const delta = time - this.lastLiveFrameTime;
             this.lastLiveFrameTime = time;
 
             const dt = Math.min(delta, 100) / 1000; // cap 100ms
+            const now = Date.now();
 
             this.liveVehicles.forEach((state, id) => {
+                // Signal Loss Policy: Stop if no update for MAX_STALE_MS
+                if (now - state.lastFix.ts > this.MAX_STALE_MS) {
+                    state.isStopped = true;
+                }
+
                 const markerData = this.markers.get(id);
                 if (!markerData) return;
 
@@ -341,6 +355,14 @@ export class GoogleMapEngine extends MapEngine {
         };
 
         this.liveAnimationFrameId = requestAnimationFrame(animate);
+    }
+
+    stopLive(): void {
+        if (this.liveAnimationFrameId !== null) {
+            cancelAnimationFrame(this.liveAnimationFrameId);
+            this.liveAnimationFrameId = null;
+            this.lastLiveFrameTime = 0;
+        }
     }
 
     centerOnVehicles(vehicles: VehicleLike[]): void {
@@ -574,7 +596,7 @@ export class GoogleMapEngine extends MapEngine {
     }
 
     dispose(): void {
-        if (this.liveAnimationFrameId) cancelAnimationFrame(this.liveAnimationFrameId);
+        this.stopLive();
         this.stopTripAnimation();
         this.clearAllMarkers();
         if (this.currentPolyline) this.currentPolyline.setMap(null);

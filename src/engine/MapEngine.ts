@@ -86,6 +86,16 @@ export abstract class MapEngine {
     protected abstract onThemeChange(theme: ThemeName): void;
 
     /**
+     * Starts the live tracking animation loop.
+     */
+    abstract startLive(): void;
+
+    /**
+     * Stops the live tracking animation loop to save resources.
+     */
+    abstract stopLive(): void;
+
+    /**
      * Cleans up resources.
      */
     abstract dispose(): void;
