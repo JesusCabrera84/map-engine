@@ -67,6 +67,25 @@ mapEngine.updateVehicleMarker({
 mapEngine.centerOnVehicles([vehicle1, vehicle2]);
 ```
 
+### Changing Themes
+
+You can switch themes dynamically using `setTheme()`. The engine automatically updates map styles and background colors to match.
+
+```typescript
+// Switch to dark mode
+mapEngine.setTheme('dark');
+
+// Switch to light mode
+mapEngine.setTheme('light');
+```
+
+**Built-in Background Colors:**
+*   **Modern**: `#0b1524` (Deep Blue)
+*   **Dark**: `#0f1115` (Almost Black)
+*   **Light/Default**: `#ffffff` (White)
+
+These colors are set on the map container to prevent white flashes when zooming or loading tiles.
+
 ### Trip Animation
 
 ```typescript

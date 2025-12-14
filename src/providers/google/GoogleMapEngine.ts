@@ -64,8 +64,9 @@ export class GoogleMapEngine extends MapEngine {
         const styles = this.getStylesForTheme(initialTheme);
 
         // Default options + overrides
+        const backgroundColor = this.getBackgroundColorForTheme(initialTheme);
         const mapOptions: google.maps.MapOptions = {
-            backgroundColor: this.options.backgroundColor || (initialTheme !== 'light' ? '#17191d' : undefined),
+            backgroundColor: this.options.backgroundColor || backgroundColor,
             center: this.options.center || { lat: 19.4326, lng: -99.1332 },
             zoom: this.options.zoom || 13,
             fullscreenControl: true,
@@ -85,6 +86,14 @@ export class GoogleMapEngine extends MapEngine {
         return this.map;
     }
 
+    private getBackgroundColorForTheme(theme: ThemeName): string {
+        switch (theme) {
+            case 'modern': return '#0b1524';
+            case 'dark': return '#0f1115';
+            case 'light': default: return '#ffffff';
+        }
+    }
+
     private getStylesForTheme(theme: ThemeName): google.maps.MapTypeStyle[] | null {
         if (this.options.styles && this.options.styles[theme]) {
             return this.options.styles[theme];
@@ -95,8 +104,8 @@ export class GoogleMapEngine extends MapEngine {
     protected onThemeChange(theme: ThemeName): void {
         if (this.map) {
             const styles = this.getStylesForTheme(theme);
-            this.map.setOptions({ styles });
-            // You might also want to update background color if passed in options, but keeping it simple for now
+            const backgroundColor = this.getBackgroundColorForTheme(theme);
+            this.map.setOptions({ styles, backgroundColor });
         }
     }
 

@@ -102,8 +102,9 @@ var GoogleMapEngine = class extends MapEngine {
     this.google = google;
     const initialTheme = this.options.theme || "modern";
     const styles = this.getStylesForTheme(initialTheme);
+    const backgroundColor = this.getBackgroundColorForTheme(initialTheme);
     const mapOptions = {
-      backgroundColor: this.options.backgroundColor || (initialTheme !== "light" ? "#17191d" : void 0),
+      backgroundColor: this.options.backgroundColor || backgroundColor,
       center: this.options.center || { lat: 19.4326, lng: -99.1332 },
       zoom: this.options.zoom || 13,
       fullscreenControl: true,
@@ -120,6 +121,17 @@ var GoogleMapEngine = class extends MapEngine {
     this.map = new this.google.maps.Map(el, mapOptions);
     return this.map;
   }
+  getBackgroundColorForTheme(theme) {
+    switch (theme) {
+      case "modern":
+        return "#0b1524";
+      case "dark":
+        return "#0f1115";
+      case "light":
+      default:
+        return "#ffffff";
+    }
+  }
   getStylesForTheme(theme) {
     if (this.options.styles && this.options.styles[theme]) {
       return this.options.styles[theme];
@@ -129,7 +141,8 @@ var GoogleMapEngine = class extends MapEngine {
   onThemeChange(theme) {
     if (this.map) {
       const styles = this.getStylesForTheme(theme);
-      this.map.setOptions({ styles });
+      const backgroundColor = this.getBackgroundColorForTheme(theme);
+      this.map.setOptions({ styles, backgroundColor });
     }
   }
   addVehicleMarker(vehicle) {
