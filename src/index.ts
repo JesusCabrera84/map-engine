@@ -1,4 +1,23 @@
-export * from './engine/types.js';
-export * from './engine/MapEngine.js';
-export * from './providers/google/GoogleMapEngine.js';
-export * from './utils/geo.js';
+export type {
+    VehicleLike,
+    ThemeName,
+    IconConfig,
+    IconResolver,
+    InfoWindowRenderer,
+    MapEngineOptions
+} from './engine/types.js';
+
+export { MapEngine } from './engine/MapEngine.js';
+export { GoogleMapEngine } from './providers/google/GoogleMapEngine.js';
+
+export type {
+    GeoPoint,
+    LatLng
+} from './utils/geo.js';
+
+export {
+    haversineDistance,
+    computeBearing,
+    extrapolatePosition,
+    lerpPosition
+} from './utils/geo.js';
