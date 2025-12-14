@@ -1,6 +1,6 @@
 import { haversineDistance, computeBearing, extrapolatePosition, lerpPosition } from '../../utils/geo.js';
 import type { VehicleLike } from '../types.js';
-import type { MarkerAdapter } from '../interfaces/MarkerAdapter.ts';
+import type { MarkerAdapter } from '../interfaces/MarkerAdapter.js';
 
 interface LiveUnitState {
     lastFix: { lat: number; lon: number; ts: number }; // ts: wall-clock timestamp
@@ -49,14 +49,6 @@ export class LiveMotionController {
         if (this.liveAnimationFrameId !== null) return;
 
         const animate = (time: number) => {
-            if (this.liveVehicles.size === 0) {
-                // Keep running? Or pause? 
-                // Original logic: if size is 0, we can stop or just wait. 
-                // Original code stopped if size was 0.
-                this.liveAnimationFrameId = null;
-                return;
-            }
-
             if (!this.lastLiveFrameTime) this.lastLiveFrameTime = time;
             const delta = time - this.lastLiveFrameTime;
             this.lastLiveFrameTime = time;
@@ -106,6 +98,10 @@ export class LiveMotionController {
             this.liveAnimationFrameId = null;
             this.lastLiveFrameTime = 0;
         }
+    }
+
+    clear(): void {
+        this.liveVehicles.clear();
     }
 
     private initLiveState(id: string | number, vehicle: VehicleLike) {

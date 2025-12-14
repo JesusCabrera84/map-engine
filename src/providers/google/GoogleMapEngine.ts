@@ -205,10 +205,8 @@ export class GoogleMapEngine extends MapEngine {
         this.markers.forEach(data => data.marker.setMap(null));
         this.markers.clear();
 
-        // Reset Live Controller
-        this.liveController.stop();
-        this.liveController = new LiveMotionController(this.markerAdapter);
-        this.liveController.start();
+        // Clear controller state
+        this.liveController.clear();
     }
 
     startLive(): void {

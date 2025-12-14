@@ -94,10 +94,6 @@ var LiveMotionController = class {
     if (typeof window === "undefined") return;
     if (this.liveAnimationFrameId !== null) return;
     const animate = (time) => {
-      if (this.liveVehicles.size === 0) {
-        this.liveAnimationFrameId = null;
-        return;
-      }
       if (!this.lastLiveFrameTime) this.lastLiveFrameTime = time;
       const delta = time - this.lastLiveFrameTime;
       this.lastLiveFrameTime = time;
@@ -139,6 +135,9 @@ var LiveMotionController = class {
       this.liveAnimationFrameId = null;
       this.lastLiveFrameTime = 0;
     }
+  }
+  clear() {
+    this.liveVehicles.clear();
   }
   initLiveState(id, vehicle) {
     const lat = Number(vehicle.lat || vehicle.latitude);
@@ -544,9 +543,7 @@ var GoogleMapEngine = class extends MapEngine {
   clearAllMarkers() {
     this.markers.forEach((data) => data.marker.setMap(null));
     this.markers.clear();
-    this.liveController.stop();
-    this.liveController = new LiveMotionController(this.markerAdapter);
-    this.liveController.start();
+    this.liveController.clear();
   }
   startLive() {
     this.liveController.start();

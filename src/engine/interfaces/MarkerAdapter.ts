@@ -8,4 +8,14 @@ export interface MarkerAdapter {
      * The controller just passes the new coordinates.
      */
     setMarkerPosition(id: string | number, lat: number, lng: number): void;
+
+    /**
+     * Optional: Updates the rotation/bearing of a marker.
+     */
+    setRotation?(id: string | number, bearing: number): void;
+
+    /**
+     * Optional: Updates the stale state of a marker (e.g. fade out).
+     */
+    setStale?(id: string | number, isStale: boolean): void;
 }
