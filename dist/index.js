@@ -14,7 +14,7 @@ var MapEngine = class {
 };
 
 // src/providers/google/GoogleMapEngine.ts
-import { Loader } from "@googlemaps/js-api-loader";
+import { setOptions, importLibrary } from "@googlemaps/js-api-loader";
 
 // src/utils/geo.ts
 function haversineDistance(coords1, coords2) {
@@ -92,13 +92,14 @@ var GoogleMapEngine = class extends MapEngine {
     if (!apiKey) {
       throw new Error("Google Maps API Key is required");
     }
-    const loader = new Loader({
-      apiKey,
-      version: "weekly",
+    setOptions({
+      key: apiKey,
+      v: "weekly",
       libraries: ["places"]
-      // often useful
     });
-    this.google = await loader.load();
+    await importLibrary("maps");
+    await importLibrary("marker");
+    this.google = google;
     const initialTheme = this.options.theme || "modern";
     const styles = this.getStylesForTheme(initialTheme);
     const mapOptions = {

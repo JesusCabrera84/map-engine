@@ -1,5 +1,5 @@
 /// <reference types="@types/google.maps" />
-import { Loader } from '@googlemaps/js-api-loader';
+import { setOptions, importLibrary } from '@googlemaps/js-api-loader';
 import { MapEngine } from '../../engine/MapEngine.js';
 import type { MapEngineOptions, ThemeName, VehicleLike, IconConfig } from '../../engine/types.js';
 import { haversineDistance, computeBearing, extrapolatePosition, lerpPosition } from '../../utils/geo.js';
@@ -49,13 +49,16 @@ export class GoogleMapEngine extends MapEngine {
             throw new Error('Google Maps API Key is required');
         }
 
-        const loader = new Loader({
-            apiKey,
-            version: 'weekly',
-            libraries: ['places'] // often useful
+        setOptions({
+            key: apiKey,
+            v: 'weekly',
+            libraries: ['places']
         });
 
-        this.google = await (loader as any).load();
+        await importLibrary('maps');
+        await importLibrary('marker');
+
+        this.google = google;
 
         const initialTheme: ThemeName = this.options.theme || 'modern';
         const styles = this.getStylesForTheme(initialTheme);

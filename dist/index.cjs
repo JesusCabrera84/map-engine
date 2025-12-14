@@ -124,13 +124,14 @@ var GoogleMapEngine = class extends MapEngine {
     if (!apiKey) {
       throw new Error("Google Maps API Key is required");
     }
-    const loader = new import_js_api_loader.Loader({
-      apiKey,
-      version: "weekly",
+    (0, import_js_api_loader.setOptions)({
+      key: apiKey,
+      v: "weekly",
       libraries: ["places"]
-      // often useful
     });
-    this.google = await loader.load();
+    await (0, import_js_api_loader.importLibrary)("maps");
+    await (0, import_js_api_loader.importLibrary)("marker");
+    this.google = google;
     const initialTheme = this.options.theme || "modern";
     const styles = this.getStylesForTheme(initialTheme);
     const mapOptions = {
