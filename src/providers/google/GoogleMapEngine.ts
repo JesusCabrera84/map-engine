@@ -111,7 +111,8 @@ export class GoogleMapEngine extends MapEngine {
         if (this.map) {
             const styles = this.getStylesForTheme(theme);
             const backgroundColor = this.getBackgroundColorForTheme(theme);
-            console.log('[GoogleMapEngine] Applying styles count:', styles?.length, 'bg:', backgroundColor);
+            const styleCount = styles ? `${styles.length} rules` : 'Default (null)';
+            console.log(`[GoogleMapEngine] Applying styles: ${styleCount}, bg: ${backgroundColor}`);
             this.map.setOptions({ styles, backgroundColor });
             // Force container update
             this.map.getDiv().style.backgroundColor = backgroundColor;

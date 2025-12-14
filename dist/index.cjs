@@ -178,7 +178,8 @@ var GoogleMapEngine = class extends MapEngine {
     if (this.map) {
       const styles = this.getStylesForTheme(theme);
       const backgroundColor = this.getBackgroundColorForTheme(theme);
-      console.log("[GoogleMapEngine] Applying styles count:", styles?.length, "bg:", backgroundColor);
+      const styleCount = styles ? `${styles.length} rules` : "Default (null)";
+      console.log(`[GoogleMapEngine] Applying styles: ${styleCount}, bg: ${backgroundColor}`);
       this.map.setOptions({ styles, backgroundColor });
       this.map.getDiv().style.backgroundColor = backgroundColor;
     } else {

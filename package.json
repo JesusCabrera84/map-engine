@@ -1,6 +1,6 @@
 {
   "name": "@JesusCabrera84/map-engine",
-  "version": "0.0.47",
+  "version": "0.0.48",
   "type": "module",
   "description": "",
   "main": "dist/index.cjs",
