@@ -102,10 +102,14 @@ export class GoogleMapEngine extends MapEngine {
     }
 
     protected onThemeChange(theme: ThemeName): void {
+        console.log('[GoogleMapEngine] onThemeChange called with:', theme);
         if (this.map) {
             const styles = this.getStylesForTheme(theme);
             const backgroundColor = this.getBackgroundColorForTheme(theme);
+            console.log('[GoogleMapEngine] Applying styles count:', styles?.length, 'bg:', backgroundColor);
             this.map.setOptions({ styles, backgroundColor });
+        } else {
+            console.warn('[GoogleMapEngine] Map not initialized, skipping theme update');
         }
     }
 

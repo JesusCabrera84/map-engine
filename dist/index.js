@@ -139,10 +139,14 @@ var GoogleMapEngine = class extends MapEngine {
     return null;
   }
   onThemeChange(theme) {
+    console.log("[GoogleMapEngine] onThemeChange called with:", theme);
     if (this.map) {
       const styles = this.getStylesForTheme(theme);
       const backgroundColor = this.getBackgroundColorForTheme(theme);
+      console.log("[GoogleMapEngine] Applying styles count:", styles?.length, "bg:", backgroundColor);
       this.map.setOptions({ styles, backgroundColor });
+    } else {
+      console.warn("[GoogleMapEngine] Map not initialized, skipping theme update");
     }
   }
   addVehicleMarker(vehicle) {
