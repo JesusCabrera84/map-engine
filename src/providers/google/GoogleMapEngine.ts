@@ -21,7 +21,7 @@ function buildSvgSymbol(bearing: number): google.maps.Symbol {
 
 export class GoogleMapEngine extends MapEngine {
     private map: google.maps.Map | null = null;
-    private google: typeof google | null = null;
+    private googleApi: typeof google | null = null;
     private markers = new Map<string | number, { marker: google.maps.Marker; infoWindow: google.maps.InfoWindow }>();
 
     // Controllers
@@ -37,8 +37,8 @@ export class GoogleMapEngine extends MapEngine {
         this.markerAdapter = {
             setMarkerPosition: (id, lat, lng) => {
                 const m = this.markers.get(id)?.marker;
-                if (m && this.google) {
-                    m.setPosition(new this.google.maps.LatLng(lat, lng));
+                if (m && this.googleApi) {
+                    m.setPosition(new this.googleApi.maps.LatLng(lat, lng));
                 }
             },
             setMarkerRotation: (id, bearing) => {
@@ -77,7 +77,7 @@ export class GoogleMapEngine extends MapEngine {
         await importLibrary('maps');
         await importLibrary('marker');
 
-        this.google = google;
+        this.googleApi = google;
 
         const initialTheme: ThemeName = this.options.theme || 'modern';
         const styles = this.getStylesForTheme(initialTheme);
@@ -99,14 +99,14 @@ export class GoogleMapEngine extends MapEngine {
         const el = typeof element === 'string' ? document.getElementById(element) : element;
         if (!el) throw new Error('Map container element not found');
 
-        this.map = new this.google!.maps.Map(el as HTMLElement, mapOptions);
+        this.map = new this.googleApi!.maps.Map(el as HTMLElement, mapOptions);
 
         if (mapOptions.backgroundColor) {
             this.map.getDiv().style.backgroundColor = mapOptions.backgroundColor;
         }
 
         // Initialize TripController now that map is ready
-        this.tripController = new TripReplayController(this.map, this.google);
+        this.tripController = new TripReplayController(this.map, this.googleApi);
 
         return this.map;
     }
@@ -141,7 +141,7 @@ export class GoogleMapEngine extends MapEngine {
     }
 
     addVehicleMarker(vehicle: VehicleLike): void {
-        if (!this.map || !this.google) return;
+        if (!this.map || !this.googleApi) return;
 
         const lat = Number(vehicle.lat || vehicle.latitude);
         const lng = Number(vehicle.lng || vehicle.longitude);
@@ -168,20 +168,20 @@ export class GoogleMapEngine extends MapEngine {
         if (iconConfig.url) {
             markerOptions.icon = {
                 url: iconConfig.url,
-                scaledSize: iconConfig.size ? new this.google!.maps.Size(iconConfig.size[0], iconConfig.size[1]) : null,
-                anchor: iconConfig.anchor ? new this.google!.maps.Point(iconConfig.anchor[0], iconConfig.anchor[1]) : null
+                scaledSize: iconConfig.size ? new this.googleApi!.maps.Size(iconConfig.size[0], iconConfig.size[1]) : null,
+                anchor: iconConfig.anchor ? new this.googleApi!.maps.Point(iconConfig.anchor[0], iconConfig.anchor[1]) : null
             };
         } else {
             markerOptions.icon = buildSvgSymbol(Number(vehicle.course || 0));
         }
 
-        const marker = new this.google.maps.Marker(markerOptions);
+        const marker = new this.googleApi.maps.Marker(markerOptions);
 
         let content = '';
         if (this.options.infoWindowRenderer) {
             content = this.options.infoWindowRenderer(vehicle);
         }
-        const infoWindow = new this.google.maps.InfoWindow({ content });
+        const infoWindow = new this.googleApi.maps.InfoWindow({ content });
 
         marker.addListener('click', () => {
             infoWindow.open(this.map, marker);
@@ -214,8 +214,8 @@ export class GoogleMapEngine extends MapEngine {
                 if (iconConfig.url) {
                     existing.marker.setIcon({
                         url: iconConfig.url,
-                        scaledSize: iconConfig.size ? new this.google!.maps.Size(iconConfig.size[0], iconConfig.size[1]) : null,
-                        anchor: iconConfig.anchor ? new this.google!.maps.Point(iconConfig.anchor[0], iconConfig.anchor[1]) : null
+                        scaledSize: iconConfig.size ? new this.googleApi!.maps.Size(iconConfig.size[0], iconConfig.size[1]) : null,
+                        anchor: iconConfig.anchor ? new this.googleApi!.maps.Point(iconConfig.anchor[0], iconConfig.anchor[1]) : null
                     });
                 }
             }
@@ -250,8 +250,8 @@ export class GoogleMapEngine extends MapEngine {
     }
 
     centerOnVehicles(vehicles: VehicleLike[]): void {
-        if (!this.map || !this.google || !vehicles.length) return;
-        const bounds = new this.google.maps.LatLngBounds();
+        if (!this.map || !this.googleApi || !vehicles.length) return;
+        const bounds = new this.googleApi.maps.LatLngBounds();
         let hasValid = false;
         vehicles.forEach(v => {
             const lat = Number(v.lat || v.latitude);

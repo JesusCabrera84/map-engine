@@ -1,6 +1,9 @@
 /// <reference types="@types/google.maps" />
 import { haversineDistance } from '../../utils/geo.js';
 
+
+type GoogleNamespace = typeof google;
+
 export class TripReplayController {
     private tripMarkers: google.maps.Marker[] = [];
     private currentPolyline: google.maps.Polyline | null = null;
@@ -17,7 +20,7 @@ export class TripReplayController {
 
     constructor(
         private map: google.maps.Map,
-        private google: typeof google
+        private google: GoogleNamespace
     ) { }
 
     drawPolyline(coordinates: any[]): void {
@@ -103,7 +106,7 @@ export class TripReplayController {
 
         if (this.animationPath.length > 0) {
             const start = this.animationPath[0].type === 'move' ? this.animationPath[0].start : this.animationPath[0].position;
-            this.vehicleMarker.setPosition(start);
+            this.vehicleMarker?.setPosition(start);
         }
 
         const animate = (time: number) => {

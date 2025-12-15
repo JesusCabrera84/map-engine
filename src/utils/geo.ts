@@ -81,3 +81,18 @@ export function lerpPosition(pos1: { lat: number; lon: number }, pos2: { lat: nu
         lon: pos1.lon + (pos2.lon - pos1.lon) * t
     };
 }
+
+/**
+ * Linearly interpolates between two angles (in degrees), taking the shortest path.
+ */
+export function lerpAngle(start: number, end: number, t: number): number {
+    const diff = ((end - start + 180) % 360 + 360) % 360 - 180;
+    return (start + diff * t + 360) % 360;
+}
+
+/**
+ * Clamps a value between a minimum and maximum.
+ */
+export function clamp(value: number, min: number, max: number): number {
+    return Math.max(min, Math.min(max, value));
+}

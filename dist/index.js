@@ -62,6 +62,10 @@ function lerpPosition(pos1, pos2, t) {
     lon: pos1.lon + (pos2.lon - pos1.lon) * t
   };
 }
+function lerpAngle(start, end, t) {
+  const diff = ((end - start + 180) % 360 + 360) % 360 - 180;
+  return (start + diff * t + 360) % 360;
+}
 
 // src/engine/controllers/LiveMotionController.ts
 var LiveMotionController = class {
@@ -100,7 +104,8 @@ var LiveMotionController = class {
       const dt = Math.min(delta, 100) / 1e3;
       const now = Date.now();
       this.liveVehicles.forEach((state, id) => {
-        if (now - state.lastFix.ts > this.MAX_STALE_MS) {
+        const age = now - state.lastFix.ts;
+        if (age > this.MAX_STALE_MS) {
           state.isStopped = true;
         }
         if (state.isStopped) {
@@ -110,11 +115,21 @@ var LiveMotionController = class {
             0.1
           );
         } else {
+          let confidence = 0;
+          if (age < 5e3) {
+            confidence = 1;
+          } else if (age < 15e3) {
+            confidence = 1 - (age - 5e3) / 1e4;
+          } else {
+            confidence = 0;
+          }
+          const effectiveSpeed = state.speed * confidence;
           const projected = extrapolatePosition(
             state.virtualPosition.lat,
             state.virtualPosition.lon,
-            state.speed,
-            state.bearing,
+            effectiveSpeed,
+            state.targetBearing,
+            // extrapolate relative to target physical heading
             dt
           );
           state.virtualPosition = lerpPosition(
@@ -122,6 +137,7 @@ var LiveMotionController = class {
             { lat: state.lastFix.lat, lon: state.lastFix.lon },
             0.05
           );
+          state.bearing = lerpAngle(state.bearing, state.targetBearing, 0.15);
         }
         this.markerAdapter.setMarkerPosition(id, state.virtualPosition.lat, state.virtualPosition.lon);
         this.markerAdapter.setMarkerRotation?.(id, state.bearing);
@@ -144,13 +160,20 @@ var LiveMotionController = class {
     const lat = Number(vehicle.lat || vehicle.latitude);
     const lng = Number(vehicle.lng || vehicle.longitude);
     const speedKmh = Number(vehicle.speed || 0);
-    const ts = Date.now();
+    let ts = Date.now();
+    if (vehicle.ts) ts = Number(vehicle.ts);
+    else if (vehicle.timestamp) ts = Number(vehicle.timestamp);
+    else if (vehicle.created_at) ts = new Date(vehicle.created_at).getTime();
+    const course = parseFloat(String(vehicle.course || 0));
     this.liveVehicles.set(id, {
       lastFix: { lat, lon: lng, ts },
       prevFix: null,
       speed: speedKmh * 1e3 / 3600,
       // m/s
-      bearing: parseFloat(String(vehicle.course || 0)),
+      bearing: course,
+      // visual starts at actual
+      targetBearing: course,
+      // physical starts at actual
       virtualPosition: { lat, lon: lng },
       lastUpdateTs: performance.now(),
       isStopped: this.isVehicleStopped(vehicle)
@@ -162,23 +185,34 @@ var LiveMotionController = class {
       this.initLiveState(id, vehicle);
       return;
     }
+    if (!this.shouldAffectMotion(vehicle)) {
+      return;
+    }
     const now = Date.now();
+    let fixTs = Date.now();
+    if (vehicle.ts) fixTs = Number(vehicle.ts);
+    else if (vehicle.timestamp) fixTs = Number(vehicle.timestamp);
+    else if (vehicle.created_at) fixTs = new Date(vehicle.created_at).getTime();
     const speedKmh = Number(vehicle.speed || 0);
+    const newIsStopped = this.isVehicleStopped(vehicle);
+    const isAlert = String(vehicle.msg_class) === "Alert";
     state.prevFix = { ...state.lastFix };
-    state.lastFix = { lat: newLat, lon: newLon, ts: now };
-    if (state.prevFix) {
-      const dist = haversineDistance(
-        { lat: state.prevFix.lat, lng: state.prevFix.lon },
-        { lat: newLat, lng: newLon }
-      );
-      if (dist > 2) {
-        state.bearing = computeBearing(state.prevFix.lat, state.prevFix.lon, newLat, newLon);
-      } else if (vehicle.course) {
-        state.bearing = Number(vehicle.course);
+    state.lastFix = { lat: newLat, lon: newLon, ts: fixTs };
+    if (!newIsStopped || isAlert) {
+      if (state.prevFix) {
+        const dist = haversineDistance(
+          { lat: state.prevFix.lat, lng: state.prevFix.lon },
+          { lat: newLat, lng: newLon }
+        );
+        if (dist > 2) {
+          state.targetBearing = computeBearing(state.prevFix.lat, state.prevFix.lon, newLat, newLon);
+        } else if (vehicle.course) {
+          state.targetBearing = Number(vehicle.course);
+        }
       }
     }
     state.speed = speedKmh * 1e3 / 3600;
-    state.isStopped = this.isVehicleStopped(vehicle);
+    state.isStopped = newIsStopped;
     const distVirtual = haversineDistance(
       { lat: state.virtualPosition.lat, lng: state.virtualPosition.lon },
       { lat: newLat, lng: newLon }
@@ -186,6 +220,13 @@ var LiveMotionController = class {
     if (distVirtual > 500) {
       state.virtualPosition = { lat: newLat, lon: newLon };
     }
+  }
+  shouldAffectMotion(vehicle) {
+    if (String(vehicle.msg_class) === "Alert") {
+      const alert = String(vehicle.alert);
+      return alert === "Turn Off" || alert === "Turn On";
+    }
+    return true;
   }
   isVehicleStopped(vehicle) {
     const speed = Number(vehicle.speed || 0);
@@ -288,7 +329,7 @@ var TripReplayController = class {
     }
     if (this.animationPath.length > 0) {
       const start = this.animationPath[0].type === "move" ? this.animationPath[0].start : this.animationPath[0].position;
-      this.vehicleMarker.setPosition(start);
+      this.vehicleMarker?.setPosition(start);
     }
     const animate = (time) => {
       if (this.isPaused) {
@@ -393,7 +434,7 @@ function buildSvgSymbol(bearing) {
 }
 var GoogleMapEngine = class extends MapEngine {
   map = null;
-  google = null;
+  googleApi = null;
   markers = /* @__PURE__ */ new Map();
   // Controllers
   liveController;
@@ -405,8 +446,8 @@ var GoogleMapEngine = class extends MapEngine {
     this.markerAdapter = {
       setMarkerPosition: (id, lat, lng) => {
         const m = this.markers.get(id)?.marker;
-        if (m && this.google) {
-          m.setPosition(new this.google.maps.LatLng(lat, lng));
+        if (m && this.googleApi) {
+          m.setPosition(new this.googleApi.maps.LatLng(lat, lng));
         }
       },
       setMarkerRotation: (id, bearing) => {
@@ -435,7 +476,7 @@ var GoogleMapEngine = class extends MapEngine {
     });
     await importLibrary("maps");
     await importLibrary("marker");
-    this.google = google;
+    this.googleApi = google;
     const initialTheme = this.options.theme || "modern";
     const styles = this.getStylesForTheme(initialTheme);
     const backgroundColor = this.getBackgroundColorForTheme(initialTheme);
@@ -453,11 +494,11 @@ var GoogleMapEngine = class extends MapEngine {
     };
     const el = typeof element === "string" ? document.getElementById(element) : element;
     if (!el) throw new Error("Map container element not found");
-    this.map = new this.google.maps.Map(el, mapOptions);
+    this.map = new this.googleApi.maps.Map(el, mapOptions);
     if (mapOptions.backgroundColor) {
       this.map.getDiv().style.backgroundColor = mapOptions.backgroundColor;
     }
-    this.tripController = new TripReplayController(this.map, this.google);
+    this.tripController = new TripReplayController(this.map, this.googleApi);
     return this.map;
   }
   getBackgroundColorForTheme(theme) {
@@ -491,7 +532,7 @@ var GoogleMapEngine = class extends MapEngine {
     }
   }
   addVehicleMarker(vehicle) {
-    if (!this.map || !this.google) return;
+    if (!this.map || !this.googleApi) return;
     const lat = Number(vehicle.lat || vehicle.latitude);
     const lng = Number(vehicle.lng || vehicle.longitude);
     const id = vehicle.id || vehicle.device_id || vehicle.deviceId;
@@ -512,18 +553,18 @@ var GoogleMapEngine = class extends MapEngine {
     if (iconConfig.url) {
       markerOptions.icon = {
         url: iconConfig.url,
-        scaledSize: iconConfig.size ? new this.google.maps.Size(iconConfig.size[0], iconConfig.size[1]) : null,
-        anchor: iconConfig.anchor ? new this.google.maps.Point(iconConfig.anchor[0], iconConfig.anchor[1]) : null
+        scaledSize: iconConfig.size ? new this.googleApi.maps.Size(iconConfig.size[0], iconConfig.size[1]) : null,
+        anchor: iconConfig.anchor ? new this.googleApi.maps.Point(iconConfig.anchor[0], iconConfig.anchor[1]) : null
       };
     } else {
       markerOptions.icon = buildSvgSymbol(Number(vehicle.course || 0));
     }
-    const marker = new this.google.maps.Marker(markerOptions);
+    const marker = new this.googleApi.maps.Marker(markerOptions);
     let content = "";
     if (this.options.infoWindowRenderer) {
       content = this.options.infoWindowRenderer(vehicle);
     }
-    const infoWindow = new this.google.maps.InfoWindow({ content });
+    const infoWindow = new this.googleApi.maps.InfoWindow({ content });
     marker.addListener("click", () => {
       infoWindow.open(this.map, marker);
     });
@@ -548,8 +589,8 @@ var GoogleMapEngine = class extends MapEngine {
         if (iconConfig.url) {
           existing.marker.setIcon({
             url: iconConfig.url,
-            scaledSize: iconConfig.size ? new this.google.maps.Size(iconConfig.size[0], iconConfig.size[1]) : null,
-            anchor: iconConfig.anchor ? new this.google.maps.Point(iconConfig.anchor[0], iconConfig.anchor[1]) : null
+            scaledSize: iconConfig.size ? new this.googleApi.maps.Size(iconConfig.size[0], iconConfig.size[1]) : null,
+            anchor: iconConfig.anchor ? new this.googleApi.maps.Point(iconConfig.anchor[0], iconConfig.anchor[1]) : null
           });
         }
       }
@@ -576,8 +617,8 @@ var GoogleMapEngine = class extends MapEngine {
     this.liveController.stop();
   }
   centerOnVehicles(vehicles) {
-    if (!this.map || !this.google || !vehicles.length) return;
-    const bounds = new this.google.maps.LatLngBounds();
+    if (!this.map || !this.googleApi || !vehicles.length) return;
+    const bounds = new this.googleApi.maps.LatLngBounds();
     let hasValid = false;
     vehicles.forEach((v) => {
       const lat = Number(v.lat || v.latitude);
