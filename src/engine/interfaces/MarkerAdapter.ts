@@ -12,6 +12,11 @@ export interface MarkerAdapter {
     /**
      * Optional: Updates the rotation/bearing of a marker.
      */
+    setMarkerRotation?(id: string | number, bearing: number): void;
+
+    /**
+     * Optional: Updates the rotation/bearing of a marker.
+     */
     setRotation?(id: string | number, bearing: number): void;
 
     /**

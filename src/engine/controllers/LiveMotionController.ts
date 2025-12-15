@@ -84,6 +84,7 @@ export class LiveMotionController {
                 }
 
                 this.markerAdapter.setMarkerPosition(id, state.virtualPosition.lat, state.virtualPosition.lon);
+                this.markerAdapter.setMarkerRotation?.(id, state.bearing);
             });
 
             this.liveAnimationFrameId = requestAnimationFrame(animate);
