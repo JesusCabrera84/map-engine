@@ -1,47 +1,140 @@
-import { haversineDistance, computeBearing, extrapolatePosition, lerpPosition, lerpAngle, clamp } from '../../utils/geo.js';
-import type { VehicleLike } from '../types.js';
+import { haversineDistance, computeBearing, extrapolatePosition, lerpPosition, lerpAngle } from '../../utils/geo.js';
+import type { LiveMotionInput, LiveMotionPolicy } from '../types.js';
 import type { MarkerAdapter } from '../interfaces/MarkerAdapter.js';
 
 interface LiveUnitState {
-    lastFix: { lat: number; lon: number; ts: number }; // ts: backend timestamp or now
-    prevFix: { lat: number; lon: number; ts: number } | null;
-    speed: number; // m/s
-    bearing: number; // visual bearing (interpolated)
-    targetBearing: number; // physical bearing (from GPS/course)
-    virtualPosition: { lat: number; lon: number };
-    lastUpdateTs: number;
+    // Última posición REAL reportada por el backend
+    realPosition: {
+        lat: number;
+        lon: number;
+        ts: number;
+        speed: number;
+        bearing: number;
+    };
+
+    // Posición previa para cálculos de bearing si falta
+    prevPosition: {
+        lat: number;
+        lon: number;
+        ts: number;
+    } | null;
+
+    // Estado VISUAL (Interpolado/Extrapolado)
+    virtualPosition: {
+        lat: number;
+        lon: number;
+        bearing: number; // visual bearing
+    };
+
+    // Target físico para suavizado de rotación
+    targetBearing: number;
+
     isStopped: boolean;
 }
+
+const DEFAULT_POLICY: LiveMotionPolicy = {
+    fullConfidenceMs: 5000,
+    decayMs: 10000,
+    maxStaleMs: 15 * 60 * 1000
+};
 
 export class LiveMotionController {
     private liveVehicles = new Map<string | number, LiveUnitState>();
     private liveAnimationFrameId: number | null = null;
     private lastLiveFrameTime = 0;
-    private readonly MAX_STALE_MS = 15 * 60 * 1000; // 15 minutes
+    private policy: LiveMotionPolicy;
 
     constructor(
-        private markerAdapter: MarkerAdapter
-    ) { }
-
-    addVehicle(vehicle: VehicleLike): void {
-        const id = vehicle.id || vehicle.device_id || vehicle.deviceId;
-        if (!id) return;
-        this.initLiveState(id, vehicle);
+        private markerAdapter: MarkerAdapter,
+        policy?: Partial<LiveMotionPolicy>
+    ) {
+        this.policy = { ...DEFAULT_POLICY, ...policy };
     }
 
-    updateVehicle(vehicle: VehicleLike): void {
-        const id = vehicle.id || vehicle.device_id || vehicle.deviceId;
-        if (!id) return;
+    /**
+     * Updates the state of a vehicle/unit based on standardized input.
+     * Decoupled from backend models.
+     */
+    update(input: LiveMotionInput): void {
+        const { id, lat, lng, speedKmh = 0, bearing, timestamp } = input;
 
-        const lat = Number(vehicle.lat || vehicle.latitude);
-        const lng = Number(vehicle.lng || vehicle.longitude);
+        let state = this.liveVehicles.get(id);
+        const now = timestamp || Date.now();
+        const speedMs = (speedKmh * 1000) / 3600;
 
-        if (!isNaN(lat) && !isNaN(lng)) {
-            this.updateLiveState(id, vehicle, lat, lng);
+        // Determine if stopped based on explicit motion flag or speed
+        // Logic: if input.motion.moving is defined, use it. Otherwise fallback to speed.
+        let isStopped = false;
+        if (input.motion?.moving !== undefined) {
+            isStopped = !input.motion.moving;
+        } else {
+            isStopped = speedMs < 0.5;
+        }
+
+        // If ignition is explicitly off, force stop
+        if (input.motion?.ignition === 'off') {
+            isStopped = true;
+        }
+
+        if (!state) {
+            // Initialize new state
+            this.liveVehicles.set(id, {
+                realPosition: { lat, lon: lng, ts: now, speed: speedMs, bearing: bearing || 0 },
+                prevPosition: null,
+                virtualPosition: { lat, lon: lng, bearing: bearing || 0 },
+                targetBearing: bearing || 0,
+                isStopped
+            });
+            return;
+        }
+
+        // --- UPDATE EXISTING STATE ---
+
+        // Update real position references
+        state.prevPosition = {
+            lat: state.realPosition.lat,
+            lon: state.realPosition.lon,
+            ts: state.realPosition.ts
+        };
+
+        state.realPosition = {
+            lat,
+            lon: lng,
+            ts: now,
+            speed: speedMs,
+            bearing: bearing || state.realPosition.bearing
+        };
+
+        state.isStopped = isStopped;
+
+        // Update target bearing (Physical direction)
+        // If bearing provided, use it. If not, calculate from movement.
+        if (bearing !== undefined) {
+            state.targetBearing = bearing;
+        } else if (!isStopped && state.prevPosition) {
+            const dist = haversineDistance(
+                { lat: state.prevPosition.lat, lng: state.prevPosition.lon },
+                { lat, lng }
+            );
+            // Only update derived bearing if moved enough to be significant
+            if (dist > 2) {
+                state.targetBearing = computeBearing(state.prevPosition.lat, state.prevPosition.lon, lat, lng);
+            }
+        }
+
+        // Snap if too far (teleport detection)
+        const distVirtual = haversineDistance(
+            { lat: state.virtualPosition.lat, lng: state.virtualPosition.lon },
+            { lat, lng }
+        );
+
+        if (distVirtual > 500) {
+            state.virtualPosition.lat = lat;
+            state.virtualPosition.lon = lng;
         }
     }
 
-    removeVehicle(id: string | number): void {
+    remove(id: string | number): void {
         this.liveVehicles.delete(id);
     }
 
@@ -58,59 +151,66 @@ export class LiveMotionController {
             const now = Date.now();
 
             this.liveVehicles.forEach((state, id) => {
-                // 1. Calculate age of the data
-                const age = now - state.lastFix.ts;
+                // Determine effective timestamp for age calculation
+                // We use state.realPosition.ts. If it's a backend TS, it might be slightly offset from Date.now()
+                // dependent on clock sync. Assuming reasonable sync or relative use.
+                const age = now - state.realPosition.ts;
 
-                // Signal Loss Policy: Stop if no update for MAX_STALE_MS
-                // We use age here (assuming system clocks are roughly synced or using wall clock fallback)
-                // If using backend TS, 'now' should be Date.now(). If backend TS is from 10 mins ago, age is huge.
-                if (age > this.MAX_STALE_MS) {
+                // 1. Signal Loss Policy
+                if (age > this.policy.maxStaleMs) {
                     state.isStopped = true;
                 }
 
                 if (state.isStopped) {
-                    state.virtualPosition = lerpPosition(
+                    // Decay virtual position to real last known position
+                    const nextPos = lerpPosition(
                         state.virtualPosition,
-                        { lat: state.lastFix.lat, lon: state.lastFix.lon },
-                        0.1
+                        { lat: state.realPosition.lat, lon: state.realPosition.lon },
+                        0.1 // fast settlement
                     );
+                    state.virtualPosition = { ...nextPos, bearing: state.virtualPosition.bearing };
                 } else {
-                    // 2. Prediction Window
-                    // 0-5s: Full extrapolation
-                    // 5-15s: Decay
-                    // >15s: Freeze
+                    // 2. Prediction Window (Configurable Policy)
                     let confidence = 0;
-                    if (age < 5000) {
+                    if (age < this.policy.fullConfidenceMs) {
                         confidence = 1;
-                    } else if (age < 15000) {
-                        confidence = 1 - (age - 5000) / 10000;
+                    } else if (age < (this.policy.fullConfidenceMs + this.policy.decayMs)) {
+                        // Decay range
+                        const decayStart = this.policy.fullConfidenceMs;
+                        const decayEnd = decayStart + this.policy.decayMs;
+                        confidence = 1 - (age - decayStart) / (decayEnd - decayStart);
                     } else {
                         confidence = 0;
                     }
 
-                    const effectiveSpeed = state.speed * confidence;
+                    const effectiveSpeed = state.realPosition.speed * confidence;
 
                     const projected = extrapolatePosition(
                         state.virtualPosition.lat,
                         state.virtualPosition.lon,
                         effectiveSpeed,
-                        state.targetBearing, // extrapolate relative to target physical heading
+                        state.targetBearing,
                         dt
                     );
 
-                    state.virtualPosition = lerpPosition(
+                    // Pull towards real position to correct drift
+                    const nextVirtual = lerpPosition(
                         projected,
-                        { lat: state.lastFix.lat, lon: state.lastFix.lon },
+                        { lat: state.realPosition.lat, lon: state.realPosition.lon },
                         0.05
                     );
+                    state.virtualPosition = { ...nextVirtual, bearing: state.virtualPosition.bearing };
 
-                    // 3. Smooth Linearly Interpolated Bearing
-                    // Lerp visual bearing towards physical targetBearing
-                    state.bearing = lerpAngle(state.bearing, state.targetBearing, 0.15);
+                    // 3. Smooth Visual Rotation
+                    state.virtualPosition.bearing = lerpAngle(
+                        state.virtualPosition.bearing,
+                        state.targetBearing,
+                        0.15
+                    );
                 }
 
                 this.markerAdapter.setMarkerPosition(id, state.virtualPosition.lat, state.virtualPosition.lon);
-                this.markerAdapter.setMarkerRotation?.(id, state.bearing);
+                this.markerAdapter.setMarkerRotation?.(id, state.virtualPosition.bearing);
             });
 
             this.liveAnimationFrameId = requestAnimationFrame(animate);
@@ -129,112 +229,5 @@ export class LiveMotionController {
 
     clear(): void {
         this.liveVehicles.clear();
-    }
-
-    private initLiveState(id: string | number, vehicle: VehicleLike) {
-        const lat = Number(vehicle.lat || vehicle.latitude);
-        const lng = Number(vehicle.lng || vehicle.longitude);
-        const speedKmh = Number(vehicle.speed || 0);
-
-        // 1. Backend timestamp preference
-        // vehicle.ts might be seconds or ms, usually ms in modern systems, but check if user provided
-        // standardizing on ms. If vehicle.ts is very small (unix seconds), multiply by 1000? 
-        // For safty let's assume input is correct or try to parse
-        let ts = Date.now();
-        if (vehicle.ts) ts = Number(vehicle.ts);
-        else if (vehicle.timestamp) ts = Number(vehicle.timestamp);
-        else if (vehicle.created_at) ts = new Date(vehicle.created_at).getTime();
-
-        const course = parseFloat(String(vehicle.course || 0));
-
-        this.liveVehicles.set(id, {
-            lastFix: { lat, lon: lng, ts },
-            prevFix: null,
-            speed: (speedKmh * 1000) / 3600, // m/s
-            bearing: course,       // visual starts at actual
-            targetBearing: course, // physical starts at actual
-            virtualPosition: { lat, lon: lng },
-            lastUpdateTs: performance.now(),
-            isStopped: this.isVehicleStopped(vehicle)
-        });
-    }
-
-    private updateLiveState(id: string | number, vehicle: VehicleLike, newLat: number, newLon: number) {
-        const state = this.liveVehicles.get(id);
-        if (!state) {
-            this.initLiveState(id, vehicle);
-            return;
-        }
-
-        // Policy: Motion Control
-        if (!this.shouldAffectMotion(vehicle)) {
-            return;
-        }
-
-        const now = Date.now(); // wall clock for age calc (locally) if needed, but we use fix ts for delta
-        // Actually, we need the FIX timestamp for the record, not Date.now()
-        let fixTs = Date.now();
-        if (vehicle.ts) fixTs = Number(vehicle.ts);
-        else if (vehicle.timestamp) fixTs = Number(vehicle.timestamp);
-        else if (vehicle.created_at) fixTs = new Date(vehicle.created_at).getTime();
-
-        const speedKmh = Number(vehicle.speed || 0);
-
-        // Calculate stopped status first
-        const newIsStopped = this.isVehicleStopped(vehicle);
-        const isAlert = String(vehicle.msg_class) === 'Alert';
-
-        state.prevFix = { ...state.lastFix };
-        state.lastFix = { lat: newLat, lon: newLon, ts: fixTs };
-
-        // Only update physical bearing if moving or alert
-        if (!newIsStopped || isAlert) {
-            if (state.prevFix) {
-                const dist = haversineDistance(
-                    { lat: state.prevFix.lat, lng: state.prevFix.lon },
-                    { lat: newLat, lng: newLon }
-                );
-                if (dist > 2) {
-                    state.targetBearing = computeBearing(state.prevFix.lat, state.prevFix.lon, newLat, newLon);
-                } else if (vehicle.course) {
-                    state.targetBearing = Number(vehicle.course);
-                }
-            }
-        }
-
-        state.speed = (speedKmh * 1000) / 3600;
-        state.isStopped = newIsStopped;
-
-        // Snap if too far
-        const distVirtual = haversineDistance(
-            { lat: state.virtualPosition.lat, lng: state.virtualPosition.lon },
-            { lat: newLat, lng: newLon }
-        );
-
-        if (distVirtual > 500) {
-            state.virtualPosition = { lat: newLat, lon: newLon };
-        }
-    }
-
-    private shouldAffectMotion(vehicle: VehicleLike): boolean {
-        if (String(vehicle.msg_class) === 'Alert') {
-            const alert = String(vehicle.alert);
-            return alert === 'Turn Off' || alert === 'Turn On';
-        }
-        return true;
-    }
-
-    private isVehicleStopped(vehicle: VehicleLike): boolean {
-        const speed = Number(vehicle.speed || 0);
-        if (vehicle.msg_class === 'Alert') {
-            if (String(vehicle.alert) === 'Turn Off') return true;
-            if (String(vehicle.alert) === 'Turn On') return false;
-        }
-        if (String(vehicle.msg_class).toLowerCase() === 'status') {
-            const status = String(vehicle.engine_status as any);
-            if (status === 'OFF' || status === 'off' || status === 'false' || status === '0') return true;
-            if (status === 'ON' || status === 'on' || status === 'true' || status === '1') return false;
-        }
-        return speed < 1;
     }
 }

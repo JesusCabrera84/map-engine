@@ -14,7 +14,7 @@ export interface VehicleLike {
     speed?: number;
     course?: number;
     msg_class?: number | string;
-    alert?: boolean | number;
+    alert?: boolean | number | string;
     engine_status?: boolean | number | string;
     // Allow other properties for flexibility
     [key: string]: any;
@@ -79,5 +79,30 @@ export interface MapEngineOptions {
      * Initial zoom level.
      */
     zoom?: number;
+    /**
+     * Configuration for the live motion prediction policy.
+     */
+    liveMotionPolicy?: LiveMotionPolicy;
     [key: string]: any;
 }
+
+export interface LiveMotionInput {
+    id: string | number;
+    lat: number;
+    lng: number;
+    speedKmh?: number;
+    bearing?: number;
+    timestamp?: number;
+
+    motion?: {
+        ignition?: 'on' | 'off';
+        moving?: boolean;
+    };
+}
+
+export interface LiveMotionPolicy {
+    fullConfidenceMs: number;
+    decayMs: number;
+    maxStaleMs: number;
+}
+

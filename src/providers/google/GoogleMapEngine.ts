@@ -1,7 +1,7 @@
 /// <reference types="@types/google.maps" />
 import { setOptions, importLibrary } from '@googlemaps/js-api-loader';
 import { MapEngine } from '../../engine/MapEngine.js';
-import type { MapEngineOptions, ThemeName, VehicleLike, IconConfig } from '../../engine/types.js';
+import type { MapEngineOptions, ThemeName, VehicleLike, IconConfig, LiveMotionInput } from '../../engine/types.js';
 import { LiveMotionController } from '../../engine/controllers/LiveMotionController.js';
 import { TripReplayController } from '../../engine/controllers/TripReplayController.js';
 import type { MarkerAdapter } from '../../engine/interfaces/MarkerAdapter.js';
@@ -58,7 +58,7 @@ export class GoogleMapEngine extends MapEngine {
             }
         };
 
-        this.liveController = new LiveMotionController(this.markerAdapter);
+        this.liveController = new LiveMotionController(this.markerAdapter, this.options.liveMotionPolicy);
         this.liveController.start();
     }
 
@@ -140,6 +140,35 @@ export class GoogleMapEngine extends MapEngine {
         }
     }
 
+    private adaptToInput(vehicle: VehicleLike, lat: number, lng: number, id: string | number): LiveMotionInput {
+        const motion: LiveMotionInput['motion'] = {};
+
+        if (vehicle.alert === 'Turn On') motion.ignition = 'on';
+        else if (vehicle.alert === 'Turn Off') motion.ignition = 'off';
+
+        if (vehicle.engine_status !== undefined) {
+            const status = String(vehicle.engine_status).toLowerCase();
+            motion.moving = status === '1' || status === 'true' || status === 'on';
+        }
+
+        const input: LiveMotionInput = {
+            id,
+            lat,
+            lng,
+            speedKmh: Number(vehicle.speed || 0),
+            bearing: Number(vehicle.course || 0),
+            motion
+        };
+
+        if (vehicle.ts) {
+            input.timestamp = Number(vehicle.ts);
+        } else if (vehicle.timestamp) {
+            input.timestamp = Number(vehicle.timestamp);
+        }
+
+        return input;
+    }
+
     addVehicleMarker(vehicle: VehicleLike): void {
         if (!this.map || !this.googleApi) return;
 
@@ -189,7 +218,7 @@ export class GoogleMapEngine extends MapEngine {
 
         this.markers.set(id, { marker, infoWindow });
 
-        this.liveController.addVehicle(vehicle);
+        this.liveController.update(this.adaptToInput(vehicle, lat, lng, id));
     }
 
     updateVehicleMarker(vehicle: VehicleLike): void {
@@ -220,7 +249,7 @@ export class GoogleMapEngine extends MapEngine {
                 }
             }
 
-            this.liveController.updateVehicle(vehicle);
+            this.liveController.update(this.adaptToInput(vehicle, lat, lng, id));
         }
     }
 
@@ -230,7 +259,7 @@ export class GoogleMapEngine extends MapEngine {
             data.marker.setMap(null);
             this.markers.delete(id);
         }
-        this.liveController.removeVehicle(id);
+        this.liveController.remove(id);
     }
 
     clearAllMarkers(): void {
