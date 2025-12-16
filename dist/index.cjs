@@ -21,7 +21,9 @@ var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: tru
 var index_exports = {};
 __export(index_exports, {
   GoogleMapEngine: () => GoogleMapEngine,
+  LiveMotionController: () => LiveMotionController,
   MapEngine: () => MapEngine,
+  TripReplayController: () => TripReplayController,
   computeBearing: () => computeBearing,
   extrapolatePosition: () => extrapolatePosition,
   haversineDistance: () => haversineDistance,
@@ -708,7 +710,9 @@ var GoogleMapEngine = class extends MapEngine {
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
   GoogleMapEngine,
+  LiveMotionController,
   MapEngine,
+  TripReplayController,
   computeBearing,
   extrapolatePosition,
   haversineDistance,

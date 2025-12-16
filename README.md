@@ -67,6 +67,13 @@ map.updateVehicleMarker({
 });
 ```
 
+### Direct Controller Access
+You can import controllers directly if you need to build custom map implementations or extend functionality.
+
+```typescript
+import { TripReplayController, LiveMotionController } from '@JesusCabrera84/map-engine';
+```
+
 ## Advanced Logic Details
 
 ### Signal Loss Policy

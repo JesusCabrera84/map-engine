@@ -675,7 +675,9 @@ var GoogleMapEngine = class extends MapEngine {
 };
 export {
   GoogleMapEngine,
+  LiveMotionController,
   MapEngine,
+  TripReplayController,
   computeBearing,
   extrapolatePosition,
   haversineDistance,

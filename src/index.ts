@@ -9,6 +9,9 @@ export type {
 
 export { MapEngine } from './engine/MapEngine.js';
 export { GoogleMapEngine } from './providers/google/GoogleMapEngine.js';
+export { TripReplayController } from './engine/controllers/TripReplayController.js';
+export { LiveMotionController } from './engine/controllers/LiveMotionController.js';
+
 
 export type {
     GeoPoint,
