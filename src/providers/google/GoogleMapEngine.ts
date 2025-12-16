@@ -331,7 +331,8 @@ export class GoogleMapEngine extends MapEngine {
 
     animateTrip(coordinates: any[], totalDuration = 10000, onFinish?: () => void): void {
         if (this.tripController) {
-            this.tripController.play(coordinates, totalDuration, onFinish);
+            this.tripController.load(coordinates);
+            this.tripController.play({ duration: totalDuration }, onFinish);
         }
     }
 

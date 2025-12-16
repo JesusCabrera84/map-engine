@@ -227,6 +227,9 @@ var TripReplayController = class {
   tripMarkers = [];
   currentPolyline = null;
   vehicleMarker = null;
+  // Data state
+  coordinates = [];
+  baseDuration = 0;
   // Animation state
   animationFrameId = null;
   isPaused = false;
@@ -235,6 +238,23 @@ var TripReplayController = class {
   totalAnimationTime = 0;
   animationPath = [];
   onFinish = null;
+  lastPauseTime = 0;
+  load(coordinates) {
+    this.stop();
+    this.coordinates = coordinates || [];
+    this.drawPolyline(this.coordinates);
+    if (this.coordinates.length >= 2) {
+      const first = this.coordinates[0];
+      const last = this.coordinates[this.coordinates.length - 1];
+      if (first.ts && last.ts) {
+        this.baseDuration = Number(last.ts) - Number(first.ts);
+      } else if (first.timestamp && last.timestamp) {
+        this.baseDuration = new Date(last.timestamp).getTime() - new Date(first.timestamp).getTime();
+      } else {
+        this.baseDuration = 1e4;
+      }
+    }
+  }
   drawPolyline(coordinates) {
     this.clearPolyline();
     if (!coordinates || coordinates.length === 0) return;
@@ -277,15 +297,20 @@ var TripReplayController = class {
     });
     this.map.fitBounds(bounds);
   }
-  play(coordinates, totalDuration = 1e4, onFinish) {
-    if (!coordinates || coordinates.length < 2) return;
+  play(options = {}, onFinish) {
+    if (!this.coordinates || this.coordinates.length < 2) return;
     this.stop();
     this.onFinish = onFinish || null;
-    const rawPath = coordinates.map((c) => ({
+    let duration = options.duration;
+    if (!duration && options.speed) {
+      duration = this.baseDuration / options.speed;
+    }
+    if (!duration) duration = 1e4;
+    const rawPath = this.coordinates.map((c) => ({
       lat: Number(c.lat),
       lng: Number(c.lng || c.lon)
     })).filter((c) => !isNaN(c.lat) && !isNaN(c.lng));
-    this.animationPath = this.prepareAnimationPath(rawPath, totalDuration);
+    this.animationPath = this.prepareAnimationPath(rawPath, duration);
     this.animationStartTime = performance.now();
     this.pausedTime = 0;
     this.isPaused = false;
@@ -306,9 +331,11 @@ var TripReplayController = class {
       const start = this.animationPath[0].type === "move" ? this.animationPath[0].start : this.animationPath[0].position;
       this.vehicleMarker?.setPosition(start);
     }
+    this.startAnimationLoop();
+  }
+  startAnimationLoop() {
     const animate = (time) => {
       if (this.isPaused) {
-        this.animationFrameId = requestAnimationFrame(animate);
         return;
       }
       const elapsed = time - this.animationStartTime - this.pausedTime;
@@ -345,9 +372,24 @@ var TripReplayController = class {
       this.vehicleMarker.setMap(null);
     }
     this.isPaused = false;
+    this.pausedTime = 0;
   }
   pause() {
+    if (this.isPaused || !this.animationFrameId) return;
     this.isPaused = true;
+    this.lastPauseTime = performance.now();
+    if (this.animationFrameId) {
+      cancelAnimationFrame(this.animationFrameId);
+      this.animationFrameId = null;
+    }
+  }
+  resume() {
+    if (!this.isPaused) return;
+    this.isPaused = false;
+    const now = performance.now();
+    const pauseDuration = now - this.lastPauseTime;
+    this.pausedTime += pauseDuration;
+    this.startAnimationLoop();
   }
   clearPolyline() {
     if (this.currentPolyline) {
@@ -660,7 +702,8 @@ var GoogleMapEngine = class extends MapEngine {
   }
   animateTrip(coordinates, totalDuration = 1e4, onFinish) {
     if (this.tripController) {
-      this.tripController.play(coordinates, totalDuration, onFinish);
+      this.tripController.load(coordinates);
+      this.tripController.play({ duration: totalDuration }, onFinish);
     }
   }
   dispose() {

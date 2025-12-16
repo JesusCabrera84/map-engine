@@ -9,6 +9,10 @@ export class TripReplayController {
     private currentPolyline: google.maps.Polyline | null = null;
     private vehicleMarker: google.maps.Marker | null = null;
 
+    // Data state
+    private coordinates: any[] = [];
+    private baseDuration = 0;
+
     // Animation state
     private animationFrameId: number | null = null;
     private isPaused = false;
@@ -17,11 +21,31 @@ export class TripReplayController {
     private totalAnimationTime = 0;
     private animationPath: any[] = [];
     private onFinish: (() => void) | null = null;
+    private lastPauseTime = 0;
 
     constructor(
         private map: google.maps.Map,
         private google: GoogleNamespace
     ) { }
+
+    load(coordinates: any[]): void {
+        this.stop();
+        this.coordinates = coordinates || [];
+        this.drawPolyline(this.coordinates);
+
+        // Calculate base duration from timestamps if available
+        if (this.coordinates.length >= 2) {
+            const first = this.coordinates[0];
+            const last = this.coordinates[this.coordinates.length - 1];
+            if (first.ts && last.ts) {
+                this.baseDuration = Number(last.ts) - Number(first.ts);
+            } else if (first.timestamp && last.timestamp) { // Support alternative timestamp key
+                this.baseDuration = new Date(last.timestamp).getTime() - new Date(first.timestamp).getTime();
+            } else {
+                this.baseDuration = 10000; // Default 10s if no timestamps
+            }
+        }
+    }
 
     drawPolyline(coordinates: any[]): void {
         this.clearPolyline();
@@ -74,17 +98,29 @@ export class TripReplayController {
         this.map.fitBounds(bounds);
     }
 
-    play(coordinates: any[], totalDuration = 10000, onFinish?: () => void): void {
-        if (!coordinates || coordinates.length < 2) return;
+    play(options: { speed?: number, duration?: number } = {}, onFinish?: () => void): void {
+        if (!this.coordinates || this.coordinates.length < 2) return;
+
+        // If already playing or paused, stop first to restart unless it's a resume
+        // But user implies play starts from beginning or applies new options. 
+        // Let's assume play() = restart with new options.
         this.stop();
+
         this.onFinish = onFinish || null;
 
-        const rawPath = coordinates.map(c => ({
+        // Determine total duration
+        let duration = options.duration;
+        if (!duration && options.speed) {
+            duration = this.baseDuration / options.speed;
+        }
+        if (!duration) duration = 10000; // Fallback
+
+        const rawPath = this.coordinates.map(c => ({
             lat: Number(c.lat),
             lng: Number(c.lng || c.lon)
         })).filter(c => !isNaN(c.lat) && !isNaN(c.lng));
 
-        this.animationPath = this.prepareAnimationPath(rawPath, totalDuration);
+        this.animationPath = this.prepareAnimationPath(rawPath, duration);
         this.animationStartTime = performance.now();
         this.pausedTime = 0;
         this.isPaused = false;
@@ -109,9 +145,13 @@ export class TripReplayController {
             this.vehicleMarker?.setPosition(start);
         }
 
+        this.startAnimationLoop();
+    }
+
+    private startAnimationLoop(): void {
         const animate = (time: number) => {
             if (this.isPaused) {
-                this.animationFrameId = requestAnimationFrame(animate);
+                // Should not happen if we cancel RAF on pause, but safety check
                 return;
             }
 
@@ -135,11 +175,13 @@ export class TripReplayController {
                     const lat = segment.start.lat + (segment.end.lat - segment.start.lat) * progress;
                     const lng = segment.start.lng + (segment.end.lng - segment.start.lng) * progress;
                     this.vehicleMarker.setPosition({ lat, lng });
+
+                    // Update rotation if needed (not implemented in original but good to have)
+                    // if (segment.bearing) ...
                 }
             }
             this.animationFrameId = requestAnimationFrame(animate);
         };
-
         this.animationFrameId = requestAnimationFrame(animate);
     }
 
@@ -152,10 +194,28 @@ export class TripReplayController {
             this.vehicleMarker.setMap(null);
         }
         this.isPaused = false;
+        this.pausedTime = 0;
     }
 
     pause(): void {
+        if (this.isPaused || !this.animationFrameId) return;
         this.isPaused = true;
+        this.lastPauseTime = performance.now();
+        if (this.animationFrameId) {
+            cancelAnimationFrame(this.animationFrameId);
+            this.animationFrameId = null;
+        }
+    }
+
+    resume(): void {
+        if (!this.isPaused) return;
+        this.isPaused = false;
+        // Calculate how long we were paused
+        const now = performance.now();
+        const pauseDuration = now - this.lastPauseTime;
+        this.pausedTime += pauseDuration;
+
+        this.startAnimationLoop();
     }
 
     clearPolyline(): void {
