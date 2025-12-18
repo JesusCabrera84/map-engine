@@ -272,17 +272,47 @@ var TripReplayController = class {
   animationPath = [];
   onFinish = null;
   lastPauseTime = 0;
-  load(coordinates) {
+  load(data) {
     this.stop();
-    this.coordinates = coordinates || [];
+    if (!data) return;
+    if (!this.google || !this.google.maps) {
+      console.error("TripReplayController: Google Maps API not initialized via constructor.");
+      return;
+    }
+    let points = [];
+    let alerts = [];
+    if (Array.isArray(data)) {
+      points = data;
+    } else {
+      points = data.points || [];
+      alerts = data.alerts || [];
+    }
+    const combined = [...points];
+    if (alerts.length > 0) {
+      alerts.forEach((a) => {
+        combined.push({
+          ...a,
+          lat: a.lat || a.latitude,
+          lng: a.lng || a.longitude || a.lon,
+          itemType: "alert"
+        });
+      });
+      combined.sort((a, b) => {
+        const tA = a.timestamp || a.ts ? new Date(a.timestamp || a.ts).getTime() : 0;
+        const tB = b.timestamp || b.ts ? new Date(b.timestamp || b.ts).getTime() : 0;
+        return tA - tB;
+      });
+    }
+    this.coordinates = combined;
     this.drawPolyline(this.coordinates);
     if (this.coordinates.length >= 2) {
-      const first = this.coordinates[0];
-      const last = this.coordinates[this.coordinates.length - 1];
-      if (first.ts && last.ts) {
-        this.baseDuration = Number(last.ts) - Number(first.ts);
-      } else if (first.timestamp && last.timestamp) {
-        this.baseDuration = new Date(last.timestamp).getTime() - new Date(first.timestamp).getTime();
+      const valid = this.coordinates.filter((c) => c.timestamp || c.ts);
+      if (valid.length >= 2) {
+        const first = valid[0];
+        const last = valid[valid.length - 1];
+        const t1 = new Date(first.timestamp || first.ts).getTime();
+        const t2 = new Date(last.timestamp || last.ts).getTime();
+        this.baseDuration = t2 - t1;
       } else {
         this.baseDuration = 1e4;
       }
