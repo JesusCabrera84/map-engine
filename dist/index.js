@@ -492,6 +492,17 @@ function buildSvgSymbol2(bearing) {
     strokeWeight: 0
   };
 }
+function buildSvgIcon(config) {
+  return {
+    path: config.path,
+    fillColor: config.fillColor || "#FFFFFF",
+    fillOpacity: config.fillOpacity ?? 1,
+    strokeColor: config.strokeColor || "transparent",
+    strokeWeight: config.strokeWeight ?? 0,
+    scale: config.scale ?? 1,
+    anchor: config.anchor ? new google.maps.Point(config.anchor.x, config.anchor.y) : null
+  };
+}
 var GoogleMapEngine = class extends MapEngine {
   map = null;
   googleApi = null;
@@ -633,7 +644,9 @@ var GoogleMapEngine = class extends MapEngine {
       map: this.map,
       title: String(vehicle.device_id || id)
     };
-    if (iconConfig.url) {
+    if (vehicle.icon) {
+      markerOptions.icon = buildSvgIcon(vehicle.icon);
+    } else if (iconConfig.url) {
       markerOptions.icon = {
         url: iconConfig.url,
         scaledSize: iconConfig.size ? new this.googleApi.maps.Size(iconConfig.size[0], iconConfig.size[1]) : null,
@@ -667,7 +680,9 @@ var GoogleMapEngine = class extends MapEngine {
       if (this.options.infoWindowRenderer) {
         existing.infoWindow.setContent(this.options.infoWindowRenderer(vehicle));
       }
-      if (this.options.iconResolver) {
+      if (vehicle.icon) {
+        existing.marker.setIcon(buildSvgIcon(vehicle.icon));
+      } else if (this.options.iconResolver) {
         const iconConfig = this.options.iconResolver(vehicle);
         if (iconConfig.url) {
           existing.marker.setIcon({

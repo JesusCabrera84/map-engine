@@ -1,7 +1,7 @@
 /// <reference types="@types/google.maps" />
 import { setOptions, importLibrary } from '@googlemaps/js-api-loader';
 import { MapEngine } from '../../engine/MapEngine.js';
-import type { MapEngineOptions, ThemeName, VehicleLike, IconConfig, LiveMotionInput } from '../../engine/types.js';
+import type { MapEngineOptions, ThemeName, VehicleLike, IconConfig, LiveMotionInput, SvgIconConfig } from '../../engine/types.js';
 import { LiveMotionController } from '../../engine/controllers/LiveMotionController.js';
 import { TripReplayController } from '../../engine/controllers/TripReplayController.js';
 import type { MarkerAdapter } from '../../engine/interfaces/MarkerAdapter.js';
@@ -16,6 +16,18 @@ function buildSvgSymbol(bearing: number): google.maps.Symbol {
         scale: 0.02,
         fillOpacity: 1,
         strokeWeight: 0,
+    };
+}
+
+function buildSvgIcon(config: SvgIconConfig): google.maps.Symbol {
+    return {
+        path: config.path,
+        fillColor: config.fillColor || '#FFFFFF',
+        fillOpacity: config.fillOpacity ?? 1,
+        strokeColor: config.strokeColor || 'transparent',
+        strokeWeight: config.strokeWeight ?? 0,
+        scale: config.scale ?? 1,
+        anchor: config.anchor ? new google.maps.Point(config.anchor.x, config.anchor.y) : null
     };
 }
 
@@ -194,7 +206,9 @@ export class GoogleMapEngine extends MapEngine {
             title: String(vehicle.device_id || id),
         };
 
-        if (iconConfig.url) {
+        if (vehicle.icon) {
+            markerOptions.icon = buildSvgIcon(vehicle.icon);
+        } else if (iconConfig.url) {
             markerOptions.icon = {
                 url: iconConfig.url,
                 scaledSize: iconConfig.size ? new this.googleApi!.maps.Size(iconConfig.size[0], iconConfig.size[1]) : null,
@@ -238,7 +252,9 @@ export class GoogleMapEngine extends MapEngine {
                 existing.infoWindow.setContent(this.options.infoWindowRenderer(vehicle));
             }
 
-            if (this.options.iconResolver) {
+            if (vehicle.icon) {
+                existing.marker.setIcon(buildSvgIcon(vehicle.icon));
+            } else if (this.options.iconResolver) {
                 const iconConfig = this.options.iconResolver(vehicle);
                 if (iconConfig.url) {
                     existing.marker.setIcon({
