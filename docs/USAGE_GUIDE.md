@@ -10,11 +10,24 @@ These controllers are designed to be map-provider agnostic where possible, thoug
 
 **Purpose**: Handles the real-time smooth animation of vehicle markers. It uses "dead reckoning" to predict vehicle movement between server updates, ensuring fluid motion instead of "jumping" markers. It also handles signal loss scenarios.
 
-### 1.1. Concepts
-- **Virtual Position**: The interpolated/extrapolated position shown on screen.
-- **Real Position**: The last actual GPS coordinate received from the backend.
-- **Dead Reckoning**: Predicting where the vehicle is *now* based on its last known speed and bearing.
-- **Signal Loss Policy**: How to behave when no data is received for a certain time (e.g., stop moving, fade out).
+### 1.1. Concepts (Stage 3: Predictive Motion Engine)
+
+The controller is powered by the **Motion Engine**, a deterministic state machine that models vehicle intent and physics.
+
+#### Motion States
+The engine assigns a cognitive state to each vehicle, determining how we trust the data:
+
+| State | Description | Behavior |
+| :--- | :--- | :--- |
+| **REAL** | Fresh, trusted data (< 5s). | Marker snaps/interpolates to true position. |
+| **COASTING** | Data is slightly stale, but physics is trusted. | Marker continues moving based on last known velocity (inertia). |
+| **PREDICTED** | Deep extrapolation (optional phase). | Marker moves but visual cues (e.g. opacity) may indicate uncertainty. |
+| **FROZEN** | Signal lost > 15m or explicit stop. | Marker stops moving immediately. |
+
+#### Key Features
+- **Network Buffer**: Handles out-of-order packets and jitter automatically.
+- **Physics Integration**: Vehicles respect momentum; they don't just teleport.
+- **Intent Modeling**: The engine distinguishes between "going straight" (high inertia) and "turning" (low inertia) to smooth paths intelligently.
 
 ### 1.2. Interfaces & Types
 

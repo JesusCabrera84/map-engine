@@ -1,45 +1,12 @@
-import { haversineDistance, computeBearing, extrapolatePosition, lerpPosition, lerpAngle } from '../../utils/geo.js';
 import type { LiveMotionInput, LiveMotionPolicy } from '../types.js';
 import type { MarkerAdapter } from '../interfaces/MarkerAdapter.js';
-
-interface LiveUnitState {
-    // Última posición REAL reportada por el backend
-    realPosition: {
-        lat: number;
-        lon: number;
-        ts: number;
-        speed: number;
-        bearing: number;
-    };
-
-    // Posición previa para cálculos de bearing si falta
-    prevPosition: {
-        lat: number;
-        lon: number;
-        ts: number;
-    } | null;
-
-    // Estado VISUAL (Interpolado/Extrapolado)
-    virtualPosition: {
-        lat: number;
-        lon: number;
-        bearing: number; // visual bearing
-    };
-
-    // Target físico para suavizado de rotación
-    targetBearing: number;
-
-    isStopped: boolean;
-}
-
-const DEFAULT_POLICY: LiveMotionPolicy = {
-    fullConfidenceMs: 5000,
-    decayMs: 10000,
-    maxStaleMs: 15 * 60 * 1000
-};
+import { StandardMotionEngine } from '../motion/MotionEngine.js'; // Class import is fine
+import type { MotionState } from '../motion/types.js';
 
 export class LiveMotionController {
-    private liveVehicles = new Map<string | number, LiveUnitState>();
+    // Map vehicle ID to its own Motion Engine brain
+    private engines = new Map<string | number, StandardMotionEngine>();
+
     private liveAnimationFrameId: number | null = null;
     private lastLiveFrameTime = 0;
     private policy: LiveMotionPolicy;
@@ -48,94 +15,32 @@ export class LiveMotionController {
         private markerAdapter: MarkerAdapter,
         policy?: Partial<LiveMotionPolicy>
     ) {
-        this.policy = { ...DEFAULT_POLICY, ...policy };
+        this.policy = {
+            fullConfidenceMs: 5000,
+            decayMs: 10000,
+            maxStaleMs: 15 * 60 * 1000,
+            ...policy
+        };
     }
 
     /**
-     * Updates the state of a vehicle/unit based on standardized input.
-     * Decoupled from backend models.
+     * Updates the state of a vehicle/unit using the Motion Engine.
      */
     update(input: LiveMotionInput): void {
-        const { id, lat, lng, speedKmh = 0, bearing, timestamp } = input;
+        const { id } = input;
 
-        let state = this.liveVehicles.get(id);
-        const now = timestamp || Date.now();
-        const speedMs = (speedKmh * 1000) / 3600;
-
-        // Determine if stopped based on explicit motion flag or speed
-        // Logic: if input.motion.moving is defined, use it. Otherwise fallback to speed.
-        let isStopped = false;
-        if (input.motion?.moving !== undefined) {
-            isStopped = !input.motion.moving;
-        } else {
-            isStopped = speedMs < 0.5;
+        let engine = this.engines.get(id);
+        if (!engine) {
+            engine = new StandardMotionEngine(this.policy);
+            this.engines.set(id, engine);
         }
 
-        // If ignition is explicitly off, force stop
-        if (input.motion?.ignition === 'off') {
-            isStopped = true;
-        }
-
-        if (!state) {
-            // Initialize new state
-            this.liveVehicles.set(id, {
-                realPosition: { lat, lon: lng, ts: now, speed: speedMs, bearing: bearing || 0 },
-                prevPosition: null,
-                virtualPosition: { lat, lon: lng, bearing: bearing || 0 },
-                targetBearing: bearing || 0,
-                isStopped
-            });
-            return;
-        }
-
-        // --- UPDATE EXISTING STATE ---
-
-        // Update real position references
-        state.prevPosition = {
-            lat: state.realPosition.lat,
-            lon: state.realPosition.lon,
-            ts: state.realPosition.ts
-        };
-
-        state.realPosition = {
-            lat,
-            lon: lng,
-            ts: now,
-            speed: speedMs,
-            bearing: bearing || state.realPosition.bearing
-        };
-
-        state.isStopped = isStopped;
-
-        // Update target bearing (Physical direction)
-        // If bearing provided, use it. If not, calculate from movement.
-        if (bearing !== undefined) {
-            state.targetBearing = bearing;
-        } else if (!isStopped && state.prevPosition) {
-            const dist = haversineDistance(
-                { lat: state.prevPosition.lat, lng: state.prevPosition.lon },
-                { lat, lng }
-            );
-            // Only update derived bearing if moved enough to be significant
-            if (dist > 2) {
-                state.targetBearing = computeBearing(state.prevPosition.lat, state.prevPosition.lon, lat, lng);
-            }
-        }
-
-        // Snap if too far (teleport detection)
-        const distVirtual = haversineDistance(
-            { lat: state.virtualPosition.lat, lng: state.virtualPosition.lon },
-            { lat, lng }
-        );
-
-        if (distVirtual > 500) {
-            state.virtualPosition.lat = lat;
-            state.virtualPosition.lon = lng;
-        }
+        // Feed the brain
+        engine.input(input);
     }
 
     remove(id: string | number): void {
-        this.liveVehicles.delete(id);
+        this.engines.delete(id);
     }
 
     start(): void {
@@ -144,79 +49,38 @@ export class LiveMotionController {
 
         const animate = (time: number) => {
             if (!this.lastLiveFrameTime) this.lastLiveFrameTime = time;
-            const delta = time - this.lastLiveFrameTime;
-            this.lastLiveFrameTime = time;
-
-            const dt = Math.min(delta, 100) / 1000; // cap 100ms
+            // time is high precision monotonic, but our engines use Date.now() for wall clock sync
+            // Let's stick to Date.now() for the engine tick to match the real-world timestamping of packets.
             const now = Date.now();
 
-            this.liveVehicles.forEach((state, id) => {
-                // Determine effective timestamp for age calculation
-                // We use state.realPosition.ts. If it's a backend TS, it might be slightly offset from Date.now()
-                // dependent on clock sync. Assuming reasonable sync or relative use.
-                const age = now - state.realPosition.ts;
+            this.engines.forEach((engine, id) => {
+                // 1. Tick the engine (Integrate physics, decay confidence)
+                engine.tick(now);
 
-                // 1. Signal Loss Policy
-                if (age > this.policy.maxStaleMs) {
-                    state.isStopped = true;
-                }
+                // 2. Get the confident estimate
+                const estimate = engine.getEstimate();
 
-                if (state.isStopped) {
-                    // Decay virtual position to real last known position
-                    const nextPos = lerpPosition(
-                        state.virtualPosition,
-                        { lat: state.realPosition.lat, lon: state.realPosition.lon },
-                        0.1 // fast settlement
-                    );
-                    state.virtualPosition = { ...nextPos, bearing: state.virtualPosition.bearing };
-                } else {
-                    // 2. Prediction Window (Configurable Policy)
-                    let confidence = 0;
-                    if (age < this.policy.fullConfidenceMs) {
-                        confidence = 1;
-                    } else if (age < (this.policy.fullConfidenceMs + this.policy.decayMs)) {
-                        // Decay range
-                        const decayStart = this.policy.fullConfidenceMs;
-                        const decayEnd = decayStart + this.policy.decayMs;
-                        confidence = 1 - (age - decayStart) / (decayEnd - decayStart);
-                    } else {
-                        confidence = 0;
-                    }
+                // 3. Render
+                this.markerAdapter.setMarkerPosition(id, estimate.pose.lat, estimate.pose.lng);
+                this.markerAdapter.setMarkerRotation?.(id, estimate.pose.heading);
 
-                    const effectiveSpeed = state.realPosition.speed * confidence;
-
-                    const projected = extrapolatePosition(
-                        state.virtualPosition.lat,
-                        state.virtualPosition.lon,
-                        effectiveSpeed,
-                        state.targetBearing,
-                        dt
-                    );
-
-                    // Pull towards real position to correct drift
-                    const nextVirtual = lerpPosition(
-                        projected,
-                        { lat: state.realPosition.lat, lon: state.realPosition.lon },
-                        0.05
-                    );
-                    state.virtualPosition = { ...nextVirtual, bearing: state.virtualPosition.bearing };
-
-                    // 3. Smooth Visual Rotation
-                    state.virtualPosition.bearing = lerpAngle(
-                        state.virtualPosition.bearing,
-                        state.targetBearing,
-                        0.15
-                    );
-                }
-
-                this.markerAdapter.setMarkerPosition(id, state.virtualPosition.lat, state.virtualPosition.lon);
-                this.markerAdapter.setMarkerRotation?.(id, state.virtualPosition.bearing);
+                // Optional: Visualize state (e.g. opacity for coasting/frozen)
+                // This would require extending MarkerAdapter to support opacity/state
+                // For now, we implement "honesty" by just rendering where it thinks it is.
+                this.handleStateVisuals(id, estimate.state);
             });
 
+            this.lastLiveFrameTime = time;
             this.liveAnimationFrameId = requestAnimationFrame(animate);
         };
 
         this.liveAnimationFrameId = requestAnimationFrame(animate);
+    }
+
+    private handleStateVisuals(id: string | number, state: MotionState): void {
+        // Placeholder for future UX hooks defined in the roadmap
+        // e.g. Ghost markers, opacity, etc.
+        // if (state === 'FROZEN') ...
     }
 
     stop(): void {
@@ -228,6 +92,6 @@ export class LiveMotionController {
     }
 
     clear(): void {
-        this.liveVehicles.clear();
+        this.engines.clear();
     }
 }

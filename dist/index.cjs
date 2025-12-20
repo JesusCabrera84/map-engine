@@ -49,6 +49,41 @@ var MapEngine = class {
 // src/providers/google/GoogleMapEngine.ts
 var import_js_api_loader = require("@googlemaps/js-api-loader");
 
+// src/engine/motion/NetworkBuffer.ts
+var SimpleNetworkBuffer = class {
+  buffer = [];
+  lastProcessedTimestamp = 0;
+  maxBufferSize = 50;
+  push(packet) {
+    const ts = packet.timestamp || Date.now();
+    if (ts < this.lastProcessedTimestamp) {
+      return;
+    }
+    this.buffer.push(packet);
+    this.buffer.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+    if (this.buffer.length > this.maxBufferSize) {
+      this.buffer.shift();
+    }
+  }
+  pop() {
+    if (this.buffer.length === 0) {
+      return null;
+    }
+    const next = this.buffer.shift();
+    if (next) {
+      this.lastProcessedTimestamp = next.timestamp || Date.now();
+    }
+    return next || null;
+  }
+  getLatestTimestamp() {
+    if (this.buffer.length === 0) {
+      return this.lastProcessedTimestamp;
+    }
+    const last = this.buffer[this.buffer.length - 1];
+    return last && last.timestamp || this.lastProcessedTimestamp;
+  }
+};
+
 // src/utils/geo.ts
 function haversineDistance(coords1, coords2) {
   const R = 6371e3;
@@ -100,144 +135,254 @@ function lerpAngle(start, end, t) {
   return (start + diff * t + 360) % 360;
 }
 
-// src/engine/controllers/LiveMotionController.ts
+// src/engine/motion/PhysicsModel.ts
+var KinematicPhysicsModel = class {
+  // We keep track of the "physics" velocity, which might differ from the last reported speed
+  // if we want to model inertia. For now, we trust the telemetry speed but allow integration.
+  currentSpeed = 0;
+  currentHeading = 0;
+  step(currentPose, dt) {
+    const newPos = extrapolatePosition(
+      currentPose.lat,
+      currentPose.lng,
+      this.currentSpeed,
+      this.currentHeading,
+      dt
+    );
+    const newUncertainty = currentPose.uncertaintyRadius + this.currentSpeed * 0.1 * dt;
+    return {
+      lat: newPos.lat,
+      lng: newPos.lon,
+      heading: this.currentHeading,
+      speed: this.currentSpeed,
+      uncertaintyRadius: newUncertainty
+    };
+  }
+  update(observation) {
+    const speedMs = (observation.speedKmh || 0) * 1e3 / 3600;
+    this.currentSpeed = speedMs;
+    if (observation.bearing !== void 0) {
+      this.currentHeading = observation.bearing;
+    }
+  }
+};
+
+// src/engine/motion/ConfidenceModel.ts
 var DEFAULT_POLICY = {
   fullConfidenceMs: 5e3,
   decayMs: 1e4,
   maxStaleMs: 15 * 60 * 1e3
 };
+var TimeBasedConfidenceModel = class {
+  lastUpdateTime = 0;
+  currentTime = 0;
+  policy;
+  constructor(policy) {
+    this.policy = { ...DEFAULT_POLICY, ...policy };
+  }
+  update(observation) {
+    const now = Date.now();
+    this.lastUpdateTime = now;
+    this.currentTime = now;
+  }
+  decay(dt) {
+    this.currentTime += dt * 1e3;
+  }
+  getConfidence() {
+    const age = this.currentTime - this.lastUpdateTime;
+    if (age < this.policy.fullConfidenceMs) {
+      return 1;
+    } else if (age < this.policy.fullConfidenceMs + this.policy.decayMs) {
+      const decayStart = this.policy.fullConfidenceMs;
+      const decayEnd = decayStart + this.policy.decayMs;
+      return 1 - (age - decayStart) / (decayEnd - decayStart);
+    } else {
+      return 0;
+    }
+  }
+  getState() {
+    const age = this.currentTime - this.lastUpdateTime;
+    const confidence = this.getConfidence();
+    if (age < this.policy.fullConfidenceMs) {
+      return "REAL";
+    } else if (confidence > 0) {
+      return "COASTING";
+    } else if (age > this.policy.maxStaleMs) {
+      return "FROZEN";
+    } else {
+      return "PREDICTED";
+    }
+  }
+};
+
+// src/engine/motion/IntentModel.ts
+var VarianceIntentModel = class {
+  recentBearings = [];
+  windowSize = 5;
+  update(observation) {
+    if (observation.bearing !== void 0) {
+      this.recentBearings.push(observation.bearing);
+      if (this.recentBearings.length > this.windowSize) {
+        this.recentBearings.shift();
+      }
+    }
+  }
+  getIntent() {
+    if (this.recentBearings.length < 2) {
+      return { action: "UNKNOWN", confidence: 0 };
+    }
+    const variance = this.calculateCircularVariance(this.recentBearings);
+    if (variance < 0.01) {
+      return { action: "STRAIGHT", confidence: 1 - variance };
+    } else if (variance > 0.1) {
+      return { action: "TURN", confidence: variance };
+    } else {
+      return { action: "STRAIGHT", confidence: 0.5 };
+    }
+  }
+  calculateCircularVariance(angles) {
+    const rads = angles.map((d) => d * Math.PI / 180);
+    let sumCos = 0;
+    let sumSin = 0;
+    for (const r of rads) {
+      sumCos += Math.cos(r);
+      sumSin += Math.sin(r);
+    }
+    const R = Math.sqrt(sumCos * sumCos + sumSin * sumSin);
+    const R_bar = R / angles.length;
+    return 1 - R_bar;
+  }
+};
+
+// src/engine/motion/MotionEngine.ts
+var StandardMotionEngine = class {
+  buffer;
+  physics;
+  confidence;
+  intent;
+  // Current best estimate
+  currentPose = {
+    lat: 0,
+    lng: 0,
+    heading: 0,
+    speed: 0,
+    uncertaintyRadius: 0
+  };
+  lastTickTime = 0;
+  initialized = false;
+  constructor(policy) {
+    this.buffer = new SimpleNetworkBuffer();
+    this.physics = new KinematicPhysicsModel();
+    this.confidence = new TimeBasedConfidenceModel(policy);
+    this.intent = new VarianceIntentModel();
+  }
+  input(packet) {
+    this.buffer.push(packet);
+    if (!this.initialized && packet.timestamp) {
+      this.processObservation(packet);
+      this.initialized = true;
+      this.lastTickTime = packet.timestamp;
+      this.lastTickTime = Date.now();
+    }
+  }
+  getEstimate() {
+    return {
+      pose: this.currentPose,
+      state: this.confidence.getState(),
+      intent: this.intent.getIntent(),
+      timestamp: this.lastTickTime
+      // Virtual time
+    };
+  }
+  tick(now) {
+    if (!this.initialized) return;
+    let packet = this.buffer.pop();
+    while (packet) {
+      this.processObservation(packet);
+      packet = this.buffer.pop();
+    }
+    const dt = (now - this.lastTickTime) / 1e3;
+    this.lastTickTime = now;
+    if (dt <= 0) return;
+    this.confidence.decay(dt);
+    const state = this.confidence.getState();
+    if (state === "FROZEN") {
+      this.currentPose.speed = 0;
+    } else {
+      this.currentPose = this.physics.step(this.currentPose, dt);
+    }
+  }
+  processObservation(packet) {
+    this.physics.update(packet);
+    this.confidence.update(packet);
+    this.intent.update(packet);
+    const observedLat = packet.lat;
+    const observedLng = packet.lng;
+    const blendFactor = 0.5;
+    const corrected = lerpPosition(
+      { lat: this.currentPose.lat, lon: this.currentPose.lng },
+      { lat: observedLat, lon: observedLng },
+      blendFactor
+    );
+    this.currentPose.lat = corrected.lat;
+    this.currentPose.lng = corrected.lon;
+    if (packet.bearing !== void 0) {
+      this.currentPose.heading = lerpAngle(this.currentPose.heading, packet.bearing, 0.5);
+    }
+    this.currentPose.uncertaintyRadius = 5;
+  }
+};
+
+// src/engine/controllers/LiveMotionController.ts
 var LiveMotionController = class {
   constructor(markerAdapter, policy) {
     this.markerAdapter = markerAdapter;
-    this.policy = { ...DEFAULT_POLICY, ...policy };
+    this.policy = {
+      fullConfidenceMs: 5e3,
+      decayMs: 1e4,
+      maxStaleMs: 15 * 60 * 1e3,
+      ...policy
+    };
   }
-  liveVehicles = /* @__PURE__ */ new Map();
+  // Map vehicle ID to its own Motion Engine brain
+  engines = /* @__PURE__ */ new Map();
   liveAnimationFrameId = null;
   lastLiveFrameTime = 0;
   policy;
   /**
-   * Updates the state of a vehicle/unit based on standardized input.
-   * Decoupled from backend models.
+   * Updates the state of a vehicle/unit using the Motion Engine.
    */
   update(input) {
-    const { id, lat, lng, speedKmh = 0, bearing, timestamp } = input;
-    let state = this.liveVehicles.get(id);
-    const now = timestamp || Date.now();
-    const speedMs = speedKmh * 1e3 / 3600;
-    let isStopped = false;
-    if (input.motion?.moving !== void 0) {
-      isStopped = !input.motion.moving;
-    } else {
-      isStopped = speedMs < 0.5;
+    const { id } = input;
+    let engine = this.engines.get(id);
+    if (!engine) {
+      engine = new StandardMotionEngine(this.policy);
+      this.engines.set(id, engine);
     }
-    if (input.motion?.ignition === "off") {
-      isStopped = true;
-    }
-    if (!state) {
-      this.liveVehicles.set(id, {
-        realPosition: { lat, lon: lng, ts: now, speed: speedMs, bearing: bearing || 0 },
-        prevPosition: null,
-        virtualPosition: { lat, lon: lng, bearing: bearing || 0 },
-        targetBearing: bearing || 0,
-        isStopped
-      });
-      return;
-    }
-    state.prevPosition = {
-      lat: state.realPosition.lat,
-      lon: state.realPosition.lon,
-      ts: state.realPosition.ts
-    };
-    state.realPosition = {
-      lat,
-      lon: lng,
-      ts: now,
-      speed: speedMs,
-      bearing: bearing || state.realPosition.bearing
-    };
-    state.isStopped = isStopped;
-    if (bearing !== void 0) {
-      state.targetBearing = bearing;
-    } else if (!isStopped && state.prevPosition) {
-      const dist = haversineDistance(
-        { lat: state.prevPosition.lat, lng: state.prevPosition.lon },
-        { lat, lng }
-      );
-      if (dist > 2) {
-        state.targetBearing = computeBearing(state.prevPosition.lat, state.prevPosition.lon, lat, lng);
-      }
-    }
-    const distVirtual = haversineDistance(
-      { lat: state.virtualPosition.lat, lng: state.virtualPosition.lon },
-      { lat, lng }
-    );
-    if (distVirtual > 500) {
-      state.virtualPosition.lat = lat;
-      state.virtualPosition.lon = lng;
-    }
+    engine.input(input);
   }
   remove(id) {
-    this.liveVehicles.delete(id);
+    this.engines.delete(id);
   }
   start() {
     if (typeof window === "undefined") return;
     if (this.liveAnimationFrameId !== null) return;
     const animate = (time) => {
       if (!this.lastLiveFrameTime) this.lastLiveFrameTime = time;
-      const delta = time - this.lastLiveFrameTime;
-      this.lastLiveFrameTime = time;
-      const dt = Math.min(delta, 100) / 1e3;
       const now = Date.now();
-      this.liveVehicles.forEach((state, id) => {
-        const age = now - state.realPosition.ts;
-        if (age > this.policy.maxStaleMs) {
-          state.isStopped = true;
-        }
-        if (state.isStopped) {
-          const nextPos = lerpPosition(
-            state.virtualPosition,
-            { lat: state.realPosition.lat, lon: state.realPosition.lon },
-            0.1
-            // fast settlement
-          );
-          state.virtualPosition = { ...nextPos, bearing: state.virtualPosition.bearing };
-        } else {
-          let confidence = 0;
-          if (age < this.policy.fullConfidenceMs) {
-            confidence = 1;
-          } else if (age < this.policy.fullConfidenceMs + this.policy.decayMs) {
-            const decayStart = this.policy.fullConfidenceMs;
-            const decayEnd = decayStart + this.policy.decayMs;
-            confidence = 1 - (age - decayStart) / (decayEnd - decayStart);
-          } else {
-            confidence = 0;
-          }
-          const effectiveSpeed = state.realPosition.speed * confidence;
-          const projected = extrapolatePosition(
-            state.virtualPosition.lat,
-            state.virtualPosition.lon,
-            effectiveSpeed,
-            state.targetBearing,
-            dt
-          );
-          const nextVirtual = lerpPosition(
-            projected,
-            { lat: state.realPosition.lat, lon: state.realPosition.lon },
-            0.05
-          );
-          state.virtualPosition = { ...nextVirtual, bearing: state.virtualPosition.bearing };
-          state.virtualPosition.bearing = lerpAngle(
-            state.virtualPosition.bearing,
-            state.targetBearing,
-            0.15
-          );
-        }
-        this.markerAdapter.setMarkerPosition(id, state.virtualPosition.lat, state.virtualPosition.lon);
-        this.markerAdapter.setMarkerRotation?.(id, state.virtualPosition.bearing);
+      this.engines.forEach((engine, id) => {
+        engine.tick(now);
+        const estimate = engine.getEstimate();
+        this.markerAdapter.setMarkerPosition(id, estimate.pose.lat, estimate.pose.lng);
+        this.markerAdapter.setMarkerRotation?.(id, estimate.pose.heading);
+        this.handleStateVisuals(id, estimate.state);
       });
+      this.lastLiveFrameTime = time;
       this.liveAnimationFrameId = requestAnimationFrame(animate);
     };
     this.liveAnimationFrameId = requestAnimationFrame(animate);
+  }
+  handleStateVisuals(id, state) {
   }
   stop() {
     if (this.liveAnimationFrameId !== null) {
@@ -247,7 +392,7 @@ var LiveMotionController = class {
     }
   }
   clear() {
-    this.liveVehicles.clear();
+    this.engines.clear();
   }
 };
 

@@ -9,17 +9,15 @@ from *future aspirations*.
 
 ## Current Status
 
-**Version:** `v0.1.x`  
-**Stage:** Live Motion Engine (Extrapolation-based)
+**Version:** `v0.2.x`
+**Stage:** Stage 3 (Predictive Motion Engine)
 
 The engine is currently optimized for:
 - High visual smoothness
 - Low cognitive overhead
 - Real-time vehicle tracking
+- **Predictive state modeling (Real/Coasting/Frozen)**
 - Frontend-only execution
-- Backend-agnostic data contracts
-
-This is a **deliberate stopping point**.
 
 ---
 
@@ -48,7 +46,7 @@ A clean, reusable engine that mirrors existing production behavior.
 
 ---
 
-## Stage 2 – Visual Intelligence Layer 🟡 (Completed – Pragmatic)
+## Stage 2 – Visual Intelligence Layer ✅ (Completed)
 
 ### Goal
 Improve perceived motion quality and visual stability while keeping
@@ -76,14 +74,12 @@ This stage intentionally favors **pragmatism over abstraction**.
 
 ---
 
-## Stage 3 – Predictive Motion Engine 🔵 (Planned – NOT Implemented)
-
-> **This stage is intentionally deferred.**
+## Stage 3 – Predictive Motion Engine ✅ (Implemented)
 
 Stage 3 introduces **anticipation**, not just extrapolation.
 
 ### Core Principle
-The engine no longer asks *“where was the vehicle?”*  
+The engine no longer asks *“where was the vehicle?”*
 It asks *“where is the vehicle likely going?”*
 
 ---
