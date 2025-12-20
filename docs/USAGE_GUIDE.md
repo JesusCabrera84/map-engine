@@ -249,6 +249,6 @@ If `icon` is not provided (or if you use an `IconResolver` that returns a `url`)
 The engine follows this priority to determine which icon to render:
 1. **`vehicle.icon` (SvgIconConfig)**: If this property is present, the engine builds a dynamic SVG symbol using the provided path and styles.
 2. **`IconResolver`**: If `vehicle.icon` is missing, the engine calls the configured `iconResolver` function to get an `IconConfig` (usually containing a URL).
-3. **Default Behavior**: If neither is present, it falls back to the engine's default marker (often a generic arrow or pin).
+3. **Default Behavior**: If neither is present, it falls back to the standard Google Maps marker (default pin).
 
 This ensures you can mix and match behaviors. You can have a default `IconResolver` for most vehicles but override specific ones (like "VIP" or "Alert" vehicles) by sending the `icon` object in their data stream.
