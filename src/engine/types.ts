@@ -16,6 +16,12 @@ export interface VehicleLike {
     msg_class?: number | string;
     alert?: boolean | number | string;
     engine_status?: boolean | number | string;
+    /**
+     * Configuration for a dynamic SVG icon.
+     * Takes precedence over `icon.url` or default icons if present.
+     * Allows the frontend to fully control the visual style (path, color, size).
+     */
+    icon?: SvgIconConfig;
     // Allow other properties for flexibility
     [key: string]: any;
 }
@@ -106,3 +112,60 @@ export interface LiveMotionPolicy {
     maxStaleMs: number;
 }
 
+/**
+ * contract SvgIconConfig
+ * 
+ * Defines the visual style for a dynamic SVG-based marker.
+ * This contract is designed for the frontend to dictate the appearance of the marker.
+ * If provided, the engine will render a vector (SVG) instead of a PNG/static image.
+ */
+export interface SvgIconConfig {
+    /**
+     * The SVG path data (d attribute). 
+     * The path should be a valid SVG path string.
+     * Example: "M10 10 L20 20 Z"
+     */
+    path: string;
+
+    /**
+     * Fill color of the SVG path.
+     * Can be any valid CSS color string (hex, rgb, rgba).
+     * @default "#FFFFFF" (or engine default)
+     */
+    fillColor?: string;
+
+    /**
+     * Opacity of the fill color (0.0 to 1.0).
+     * @default 1.0
+     */
+    fillOpacity?: number;
+
+    /**
+     * Stroke color (border) of the SVG path.
+     * Can be any valid CSS color string.
+     * @default "transparent"
+     */
+    strokeColor?: string;
+
+    /**
+     * Thickness of the stroke in pixels.
+     * @default 0
+     */
+    strokeWeight?: number;
+
+    /**
+     * Scale factor for the icon.
+     * @default 1.0
+     */
+    scale?: number;
+
+    /**
+     * The position within the icon that anchors to the map coordinate.
+     * Typically centered or at the bottom tip.
+     * values are relative to the SVG coordinate system.
+     */
+    anchor?: {
+        x: number;
+        y: number;
+    };
+}

@@ -194,3 +194,53 @@ const myAdapter = {
 };
 const controller = new LiveMotionController(myAdapter);
 ```
+
+## 4. Customizing Marker Icons (SvgIconConfig)
+
+The Map Engine supports two ways to define vehicle icons:
+1. **Static Images (URL)**: Using standard PNG/JPG images.
+2. **Dynamic SVG Icons**: Using an `SvgIconConfig` object to define paths and styles programmatically.
+
+### 4.1. SvgIconConfig Contract
+
+The `SvgIconConfig` contract allows the frontend to fully control the visual style of the marker.
+
+```typescript
+interface SvgIconConfig {
+    path: string;            // valid SVG path (d attribute)
+    fillColor?: string;      // e.g. "#FF0000", "rgba(0,0,0,0.5)"
+    fillOpacity?: number;    // 0.0 - 1.0
+    strokeColor?: string;    // e.g. "#FFFFFF"
+    strokeWeight?: number;   // pixels
+    scale?: number;          // default 1.0
+    anchor?: { x: number; y: number }; // Anchor point
+}
+```
+
+### 4.2. Usage
+
+To use dynamic icons, simply include the `icon` property in the vehicle object passed to `addVehicleMarker` or `updateVehicleMarker`.
+
+#### Example: Red Arrow
+
+```javascript
+const vehicle = {
+    id: "123",
+    lat: 19.4326,
+    lng: -99.1332,
+    icon: {
+        path: "M0,-5 L5,5 L0,2.5 L-5,5 Z", // Simple arrow
+        fillColor: "#FF0000",
+        fillOpacity: 1,
+        strokeColor: "#FFFFFF",
+        strokeWeight: 1,
+        scale: 2,
+        anchor: { x: 0, y: 0 }
+    }
+};
+
+engine.updateVehicleMarker(vehicle);
+```
+
+#### Backward Compatibility
+If `icon` is not provided (or if you use an `IconResolver` that returns a `url`), the engine falls back to the standard image marker logic. The `SvgIconConfig` takes precedence if both are present in a way that suggests dynamic styling is preferred.
