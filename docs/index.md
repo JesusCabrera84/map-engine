@@ -3,6 +3,7 @@
 This module provides a framework-agnostic engine for managing map interactions, specifically designed for fleet tracking and vehicle management capabilities. It currently supports Google Maps via the `GoogleMapEngine` provider.
 
 ## Key Features
+
 - **Abstraction Layer**: `MapEngine` abstract class allows switching map providers.
 - **Live Tracking**: Built-in "Dead Reckoning" animation loop for smooth vehicle movement updates.
 - **Trip Playback**: Native support for drawing path polylines and animating vehicle movement along history.
@@ -17,6 +18,7 @@ npm install @JesusCabrera84/map-engine
 ## Usage
 
 ### Initialization
+
 The engine is instantiated with configuration options, not as a singleton.
 
 ```typescript
@@ -55,12 +57,12 @@ await mapEngine.mount('map-div-id');
 ```typescript
 // Add or update a vehicle
 mapEngine.updateVehicleMarker({
-    id: 123,
-    lat: 19.4326,
-    lng: -99.1332,
-    speed: 45,
-    course: 90,
-    // ...any other data used by your renderers
+  id: 123,
+  lat: 19.4326,
+  lng: -99.1332,
+  speed: 45,
+  course: 90,
+  // ...any other data used by your renderers
 });
 
 // Center view
@@ -73,16 +75,17 @@ You can switch themes dynamically using `setTheme()`. The engine automatically u
 
 ```typescript
 // Switch to dark mode
-mapEngine.setTheme('dark');
+mapEngine.setTheme("dark");
 
 // Switch to light mode
-mapEngine.setTheme('light');
+mapEngine.setTheme("light");
 ```
 
 **Built-in Background Colors:**
-*   **Modern**: `#0b1524` (Deep Blue)
-*   **Dark**: `#0f1115` (Almost Black)
-*   **Light/Default**: `#ffffff` (White)
+
+- **Modern**: `#0b1524` (Deep Blue)
+- **Dark**: `#0f1115` (Almost Black)
+- **Light/Default**: `#ffffff` (White)
 
 These colors are set on the map container to prevent white flashes when zooming or loading tiles.
 
@@ -90,12 +93,15 @@ These colors are set on the map container to prevent white flashes when zooming 
 
 ```typescript
 // Draw route
-const path = [{lat: 19.4, lng: -99.1}, {lat: 19.5, lng: -99.2}];
+const path = [
+  { lat: 19.4, lng: -99.1 },
+  { lat: 19.5, lng: -99.2 },
+];
 mapEngine.drawTripPolyline(path);
 
 // Play animation
 mapEngine.animateTrip(path, 20000, () => {
-    console.log('Animation finished');
+  console.log("Animation finished");
 });
 ```
 
@@ -105,18 +111,18 @@ mapEngine.animateTrip(path, 20000, () => {
 
 This section outlines the mapping between the legacy `mapService.js` (Svelte-tied singleton) and the new `MapEngine` (Standalone Class).
 
-| Legacy (`to_migrate/mapService.js`) | New Equivalent (`src/providers/google/GoogleMapEngine.ts`) | Notes |
-|-------------------------------------|------------------------------------------------------------|-------|
-| `import { theme } from '$lib/stores'` | `mapEngine.setTheme('dark')` | Logic moved out. The app controls theme changes explicitly. |
-| `import { unitIcons } ...` | `options.iconResolver` | Icons are no longer hardcoded. You pass a function to resolve them dynamically. |
-| `createVehicleInfoContent(vehicle)` | `options.infoWindowRenderer` | HTML generation is injected. The engine does not know about your HTML structure. |
-| `initialize(mapElement)` | `mount(element)` | Now returns a Promise. Initialization is explicit. |
-| `updateVehicleMarker(vehicle)` | `updateVehicleMarker(vehicle)` | Same name, but relies on injected `IconResolver` instead of internal logic. |
-| `startLiveAnimationLoop()` | `constructor()` (Automatic) | The loop starts automatically but idles if no vehicles exist. |
-| `drawTripPolyline(coords)` | `drawTripPolyline(coords)` | Logic preserved but decentered from Svelte stores. |
-| `animateTrip(...)` | `animateTrip(...)` | Animation logic preserved. |
-| `computeBearing`, `haversine`... | `import { ... } from './utils/geo'` | Math helpers extracted to pure utility module. |
-| **Global Singleton Instance** | **New Class Instance** | You must instantiate `new GoogleMapEngine()`. Allows multiple maps per page. |
+| Legacy (`to_migrate/mapService.js`)   | New Equivalent (`src/providers/google/GoogleMapEngine.ts`) | Notes                                                                            |
+| ------------------------------------- | ---------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| `import { theme } from '$lib/stores'` | `mapEngine.setTheme('dark')`                               | Logic moved out. The app controls theme changes explicitly.                      |
+| `import { unitIcons } ...`            | `options.iconResolver`                                     | Icons are no longer hardcoded. You pass a function to resolve them dynamically.  |
+| `createVehicleInfoContent(vehicle)`   | `options.infoWindowRenderer`                               | HTML generation is injected. The engine does not know about your HTML structure. |
+| `initialize(mapElement)`              | `mount(element)`                                           | Now returns a Promise. Initialization is explicit.                               |
+| `updateVehicleMarker(vehicle)`        | `updateVehicleMarker(vehicle)`                             | Same name, but relies on injected `IconResolver` instead of internal logic.      |
+| `startLiveAnimationLoop()`            | `constructor()` (Automatic)                                | The loop starts automatically but idles if no vehicles exist.                    |
+| `drawTripPolyline(coords)`            | `drawTripPolyline(coords)`                                 | Logic preserved but decentered from Svelte stores.                               |
+| `animateTrip(...)`                    | `animateTrip(...)`                                         | Animation logic preserved.                                                       |
+| `computeBearing`, `haversine`...      | `import { ... } from './utils/geo'`                        | Math helpers extracted to pure utility module.                                   |
+| **Global Singleton Instance**         | **New Class Instance**                                     | You must instantiate `new GoogleMapEngine()`. Allows multiple maps per page.     |
 
 ### Major Architectural Changes
 

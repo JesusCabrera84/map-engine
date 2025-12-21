@@ -15,16 +15,18 @@ These controllers are designed to be map-provider agnostic where possible, thoug
 The controller is powered by the **Motion Engine**, a deterministic state machine that models vehicle intent and physics.
 
 #### Motion States
+
 The engine assigns a cognitive state to each vehicle, determining how we trust the data:
 
-| State | Description | Behavior |
-| :--- | :--- | :--- |
-| **REAL** | Fresh, trusted data (< 5s). | Marker snaps/interpolates to true position. |
-| **COASTING** | Data is slightly stale, but physics is trusted. | Marker continues moving based on last known velocity (inertia). |
-| **PREDICTED** | Deep extrapolation (optional phase). | Marker moves but visual cues (e.g. opacity) may indicate uncertainty. |
-| **FROZEN** | Signal lost > 15m or explicit stop. | Marker stops moving immediately. |
+| State         | Description                                     | Behavior                                                              |
+| :------------ | :---------------------------------------------- | :-------------------------------------------------------------------- |
+| **REAL**      | Fresh, trusted data (< 5s).                     | Marker snaps/interpolates to true position.                           |
+| **COASTING**  | Data is slightly stale, but physics is trusted. | Marker continues moving based on last known velocity (inertia).       |
+| **PREDICTED** | Deep extrapolation (optional phase).            | Marker moves but visual cues (e.g. opacity) may indicate uncertainty. |
+| **FROZEN**    | Signal lost > 15m or explicit stop.             | Marker stops moving immediately.                                      |
 
 #### Key Features
+
 - **Network Buffer**: Handles out-of-order packets and jitter automatically.
 - **Physics Integration**: Vehicles respect momentum; they don't just teleport.
 - **Intent Modeling**: The engine distinguishes between "going straight" (high inertia) and "turning" (low inertia) to smooth paths intelligently.
@@ -32,62 +34,69 @@ The engine assigns a cognitive state to each vehicle, determining how we trust t
 ### 1.2. Interfaces & Types
 
 #### `LiveMotionPolicy`
+
 Configuration for animation behavior.
+
 ```typescript
 interface LiveMotionPolicy {
-    fullConfidenceMs: number; // Time in ms to trust extrapolation fully (e.g., 5000)
-    decayMs: number;          // Time in ms to gradually stop extrapolating (e.g., 10000)
-    maxStaleMs: number;       // Time in ms after which vehicle is considered "stopped" if no data (e.g., 15 mins)
+  fullConfidenceMs: number; // Time in ms to trust extrapolation fully (e.g., 5000)
+  decayMs: number; // Time in ms to gradually stop extrapolating (e.g., 10000)
+  maxStaleMs: number; // Time in ms after which vehicle is considered "stopped" if no data (e.g., 15 mins)
 }
 ```
 
 #### `MarkerAdapter`
+
 Interface to decouple the controller from the map implementation.
+
 ```typescript
 interface MarkerAdapter {
-    setMarkerPosition(id: string | number, lat: number, lng: number): void;
-    setMarkerRotation?(id: string | number, bearing: number): void;
+  setMarkerPosition(id: string | number, lat: number, lng: number): void;
+  setMarkerRotation?(id: string | number, bearing: number): void;
 }
 ```
 
 #### `LiveMotionInput`
+
 Standardized input structure for updates.
+
 ```typescript
 interface LiveMotionInput {
-    id: string | number;
-    lat: number;
-    lng: number;
-    speedKmh?: number;
-    bearing?: number; // 0-360
-    timestamp?: number; // Epoch ms
-    motion?: {
-        moving?: boolean;   // Explicit moving flag
-        ignition?: 'on' | 'off'; // Explicit ignition state
-    };
+  id: string | number;
+  lat: number;
+  lng: number;
+  speedKmh?: number;
+  bearing?: number; // 0-360
+  timestamp?: number; // Epoch ms
+  motion?: {
+    moving?: boolean; // Explicit moving flag
+    ignition?: "on" | "off"; // Explicit ignition state
+  };
 }
 ```
 
 ### 1.3. Usage
 
 #### Initialization
+
 Instantiate the controller with an adapter implementation and optional policy overrides.
 
 ```typescript
 // Example using Google Maps
 const markerAdapter = {
-    setMarkerPosition: (id, lat, lng) => {
-        const marker = myMarkers.get(id);
-        if (marker) marker.setPosition({ lat, lng });
-    },
-    setMarkerRotation: (id, bearing) => {
-        const marker = myMarkers.get(id);
-        // Implement rotation logic (e.g., changing icon or CSS rotation)
-    }
+  setMarkerPosition: (id, lat, lng) => {
+    const marker = myMarkers.get(id);
+    if (marker) marker.setPosition({ lat, lng });
+  },
+  setMarkerRotation: (id, bearing) => {
+    const marker = myMarkers.get(id);
+    // Implement rotation logic (e.g., changing icon or CSS rotation)
+  },
 };
 
 const liveController = new LiveMotionController(markerAdapter, {
-    fullConfidenceMs: 5000,
-    decayMs: 5000
+  fullConfidenceMs: 5000,
+  decayMs: 5000,
 });
 
 // Start the animation loop
@@ -95,20 +104,22 @@ liveController.start();
 ```
 
 #### Feeding Data
+
 Call `update()` whenever a new position is received from the backend/socket.
 
 ```typescript
 liveController.update({
-    id: 'vehicle-123',
-    lat: 19.4326,
-    lng: -99.1332,
-    speedKmh: 45,
-    bearing: 90,
-    timestamp: Date.now()
+  id: "vehicle-123",
+  lat: 19.4326,
+  lng: -99.1332,
+  speedKmh: 45,
+  bearing: 90,
+  timestamp: Date.now(),
 });
 ```
 
 #### Lifecycle
+
 - `start()`: Starts the `requestAnimationFrame` loop.
 - `stop()`: Stops the animation loop (CPU saving).
 - `remove(id)`: Stops tracking/animating a specific ID.
@@ -121,22 +132,29 @@ liveController.update({
 **Purpose**: Replays a historical route (trip) on the map. It draws the route polyline and animates a marker along the path, simulating the playback of the trip.
 
 ### 2.1. Dependencies
+
 Currently requires `google.maps.Map` and the `google` namespace.
 
 ### 2.2. Usage
 
 #### Initialization
+
 ```typescript
-const tripController = new TripReplayController(googleMapInstance, googleNamespace);
+const tripController = new TripReplayController(
+  googleMapInstance,
+  googleNamespace,
+);
 ```
 
 #### Loading Data
+
 Input is an array of coordinate objects.
+
 ```typescript
 const tripCoordinates = [
-    { lat: 19.4, lng: -99.1, ts: 1600000000000 },
-    { lat: 19.5, lng: -99.2, ts: 1600000010000 },
-    // ...
+  { lat: 19.4, lng: -99.1, ts: 1600000000000 },
+  { lat: 19.5, lng: -99.2, ts: 1600000010000 },
+  // ...
 ];
 
 // Loads data, draws polyline, fits bounds
@@ -146,33 +164,41 @@ tripController.load(tripCoordinates);
 #### Playback Controls
 
 - **Play**: Starts or restarts animation.
+
 ```typescript
-tripController.play({
+tripController.play(
+  {
     duration: 30000, // Duration in ms for the whole trip
     // OR
-    speed: 10 // Speed multiplier (if baseDuration is calculated from timestamps)
-}, () => {
+    speed: 10, // Speed multiplier (if baseDuration is calculated from timestamps)
+  },
+  () => {
     console.log("Replay finished");
-});
+  },
+);
 ```
 
 - **Pause/Resume**:
+
 ```typescript
 tripController.pause();
 tripController.resume();
 ```
 
 - **Stop**: Stops animation and hides the vehicle marker.
+
 ```typescript
 tripController.stop();
 ```
 
 - **Clear**: Clears polyline, markers, and resets state.
+
 ```typescript
 tripController.clearPolyline();
 ```
 
 ### 2.3. Logic Details
+
 - **Stop Detection**: The controller automatically groups close points (< 5 meters) into "stops" and adds a pause duration during playback to simulate waiting time.
 - **Interpolation**: Linear interpolation between points for smooth movement.
 - **Polyline**: Draws a geodesic polyline for the path.
@@ -185,20 +211,23 @@ tripController.clearPolyline();
 **Important**: These controllers and the underlying `geo.js` utilities are **included** in the `@JesusCabrera84/map-engine` package. You do **not** need to recreate `geo.js` or copy the controller files if you are using this package.
 
 ### Using with `GoogleMapEngine` (Recommended)
+
 If you are using `GoogleMapEngine`, these controllers are already integrated.
+
 - Use `addVehicleMarker` / `updateVehicleMarker` to trigger Live Motion.
 - Use `startLive()` / `stopLive()` to control the loop.
 - Use `animateTrip(coords)` / `stopTripAnimation()` for replay behaviors.
 
 ### Using with Custom Map Providers
+
 If you want to use the `LiveMotionController` with a different map provider (e.g. Leaflet) within the same context:
 
 1.  **Import**: Import `LiveMotionController` from the package source.
     ```typescript
-    import { LiveMotionController } from '../engine/controllers/LiveMotionController';
+    import { LiveMotionController } from "../engine/controllers/LiveMotionController";
     ```
 2.  **Logic**: The complex logic (smoothing, prediction, loop) is handled internally. `geo.ts` is used internally by the controller, so no extra setup is needed.
-3.  **Adapter**: You simply need to implement the `MarkerAdapter` interface to tell the controller how to move *your* specific map markers.
+3.  **Adapter**: You simply need to implement the `MarkerAdapter` interface to tell the controller how to move _your_ specific map markers.
 
 ```typescript
 const myAdapter = {
@@ -211,6 +240,7 @@ const controller = new LiveMotionController(myAdapter);
 ## 4. Customizing Marker Icons (SvgIconConfig)
 
 The Map Engine supports two ways to define vehicle icons:
+
 1. **Static Images (URL)**: Using standard PNG/JPG images.
 2. **Dynamic SVG Icons**: Using an `SvgIconConfig` object to define paths and styles programmatically.
 
@@ -220,13 +250,13 @@ The `SvgIconConfig` contract allows the frontend to fully control the visual sty
 
 ```typescript
 interface SvgIconConfig {
-    path: string;            // valid SVG path (d attribute)
-    fillColor?: string;      // e.g. "#FF0000", "rgba(0,0,0,0.5)"
-    fillOpacity?: number;    // 0.0 - 1.0
-    strokeColor?: string;    // e.g. "#FFFFFF"
-    strokeWeight?: number;   // pixels
-    scale?: number;          // default 1.0
-    anchor?: { x: number; y: number }; // Anchor point
+  path: string; // valid SVG path (d attribute)
+  fillColor?: string; // e.g. "#FF0000", "rgba(0,0,0,0.5)"
+  fillOpacity?: number; // 0.0 - 1.0
+  strokeColor?: string; // e.g. "#FFFFFF"
+  strokeWeight?: number; // pixels
+  scale?: number; // default 1.0
+  anchor?: { x: number; y: number }; // Anchor point
 }
 ```
 
@@ -238,28 +268,31 @@ To use dynamic icons, simply include the `icon` property in the vehicle object p
 
 ```javascript
 const vehicle = {
-    id: "123",
-    lat: 19.4326,
-    lng: -99.1332,
-    icon: {
-        path: "M0,-5 L5,5 L0,2.5 L-5,5 Z", // Simple arrow
-        fillColor: "#FF0000",
-        fillOpacity: 1,
-        strokeColor: "#FFFFFF",
-        strokeWeight: 1,
-        scale: 2,
-        anchor: { x: 0, y: 0 }
-    }
+  id: "123",
+  lat: 19.4326,
+  lng: -99.1332,
+  icon: {
+    path: "M0,-5 L5,5 L0,2.5 L-5,5 Z", // Simple arrow
+    fillColor: "#FF0000",
+    fillOpacity: 1,
+    strokeColor: "#FFFFFF",
+    strokeWeight: 1,
+    scale: 2,
+    anchor: { x: 0, y: 0 },
+  },
 };
 
 engine.updateVehicleMarker(vehicle);
 ```
 
 #### Backward Compatibility
+
 If `icon` is not provided (or if you use an `IconResolver` that returns a `url`), the engine falls back to the standard image marker logic. The `SvgIconConfig` takes precedence if both are present in a way that suggests dynamic styling is preferred.
 
 ### 4.3. Precedence Logic (Important)
+
 The engine follows this priority to determine which icon to render:
+
 1. **`vehicle.icon` (SvgIconConfig)**: If this property is present, the engine builds a dynamic SVG symbol using the provided path and styles.
 2. **`IconResolver`**: If `vehicle.icon` is missing, the engine calls the configured `iconResolver` function to get an `IconConfig` (usually containing a URL).
 3. **Default Behavior**: If neither is present, it falls back to the standard Google Maps marker (default pin).

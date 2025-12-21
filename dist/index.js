@@ -285,7 +285,7 @@ var StandardMotionEngine = class {
     this.intent.update(packet);
     const observedLat = packet.lat;
     const observedLng = packet.lng;
-    const blendFactor = 0.5;
+    const blendFactor = this.initialized ? 0.5 : 1;
     const corrected = lerpPosition(
       { lat: this.currentPose.lat, lon: this.currentPose.lng },
       { lat: observedLat, lon: observedLng },
@@ -294,7 +294,8 @@ var StandardMotionEngine = class {
     this.currentPose.lat = corrected.lat;
     this.currentPose.lng = corrected.lon;
     if (packet.bearing !== void 0) {
-      this.currentPose.heading = lerpAngle(this.currentPose.heading, packet.bearing, 0.5);
+      const angleBlend = this.initialized ? 0.5 : 1;
+      this.currentPose.heading = lerpAngle(this.currentPose.heading, packet.bearing, angleBlend);
     }
     this.currentPose.uncertaintyRadius = 5;
   }
@@ -695,7 +696,7 @@ var GoogleMapEngine = class extends MapEngine {
       center: this.options.center || { lat: 19.4326, lng: -99.1332 },
       zoom: this.options.zoom || 13,
       fullscreenControl: true,
-      streetViewControl: false,
+      streetViewControl: this.options.streetViewControl ?? false,
       mapTypeControl: false,
       zoomControl: true,
       styles: styles || void 0,
